@@ -1,0 +1,156 @@
+version: "3.9"
+
+services:
+  zookeeper:
+    image: bitnami/zookeeper:3.9
+    container_name: zookeeper
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+    ports:
+      - "2181:2181"
+    networks:
+      - learnerlab-net
+
+  kafka:
+    image: bitnami/kafka:3.6
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    environment:
+      - KAFKA_CFG_ZOOKEEPER_CONNECT=zookeeper:2181
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092
+      # Set this to the EC2 private IP at runtime: PLAINTEXT://<private-ip>:9092
+      - KAFKA_CFG_ADVERTISED_LISTENERS=${KAFKA_ADVERTISED_LISTENERS:-PLAINTEXT://localhost:9092}
+      - KAFKA_CFG_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+      - KAFKA_CFG_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1
+      - KAFKA_CFG_TRANSACTION_STATE_LOG_MIN_ISR=1
+      - ALLOW_PLAINTEXT_LISTENER=yes
+    ports:
+      - "9092:9092"
+    networks:
+      - learnerlab-net
+    volumes:
+      - kafka-data:/bitnami/kafka
+
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+    ports:
+      - "5432:5432"
+    networks:
+      - learnerlab-net
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - learnerlab-net
+
+  api-gateway:
+    image: api-gateway:local
+    container_name: api-gateway
+    depends_on:
+      - kafka
+      - postgres
+      - redis
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/gateway
+      - REDIS_URL=redis://redis:6379/0
+      - JWT_SECRET=replace-me
+    ports:
+      - "8000:8000"
+    networks:
+      - learnerlab-net
+
+  tts-service:
+    image: tts-service:local
+    container_name: tts-service
+    depends_on:
+      - kafka
+      - postgres
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/tts
+    ports:
+      - "8101:8000"
+    networks:
+      - learnerlab-net
+
+  stt-service:
+    image: stt-service:local
+    container_name: stt-service
+    depends_on:
+      - kafka
+      - postgres
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/stt
+    ports:
+      - "8102:8000"
+    networks:
+      - learnerlab-net
+
+  chat-service:
+    image: chat-service:local
+    container_name: chat-service
+    depends_on:
+      - kafka
+      - postgres
+      - redis
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/chat
+      - REDIS_URL=redis://redis:6379/0
+    ports:
+      - "8103:8000"
+    networks:
+      - learnerlab-net
+
+  doc-service:
+    image: doc-service:local
+    container_name: doc-service
+    depends_on:
+      - kafka
+      - postgres
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/doc
+      - STORAGE_BACKEND=local
+      - STORAGE_PATH=/data/documents
+    ports:
+      - "8104:8000"
+    networks:
+      - learnerlab-net
+    volumes:
+      - doc-data:/data/documents
+
+  quiz-service:
+    image: quiz-service:local
+    container_name: quiz-service
+    depends_on:
+      - kafka
+      - postgres
+    environment:
+      - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/quiz
+    ports:
+      - "8105:8000"
+    networks:
+      - learnerlab-net
+
+networks:
+  learnerlab-net:
+    driver: bridge
+
+volumes:
+  kafka-data:
+  postgres-data:
+  doc-data:
