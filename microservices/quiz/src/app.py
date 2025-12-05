@@ -11,10 +11,16 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from kafka import KafkaProducer
+from kafka import KafkaProducer, KafkaConsumer
 from kafka.errors import KafkaError
 import time
 import random
+import boto3
+from botocore.exceptions import ClientError
+import threading
+from langchain.prompts import PromptTemplate
+from langchain_openai import ChatOpenAI
+from langchain.chains import LLMChain
 
 # Configure logging
 logging.basicConfig(
@@ -35,6 +41,19 @@ DB_PASSWORD = os.environ.get('DB_PASSWORD', 'postgres')
 KAFKA_BOOTSTRAP_SERVERS = os.environ.get('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092').split(',')
 KAFKA_TOPIC_REQUEST = 'quiz.requested'
 KAFKA_TOPIC_GENERATED = 'quiz.generated'
+KAFKA_TOPIC_NOTES_GENERATED = 'notes.generated'
+
+# S3 Configuration
+AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
+S3_BUCKET_NAME = os.environ.get('S3_BUCKET_NAME', 'quiz-service-storage-dev')
+AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID', '')
+AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
+
+# OpenRouter Configuration
+OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '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')
+OPENROUTER_MODEL = os.environ.get('OPENROUTER_MODEL', 'amazon/nova-2-lite-v1:free')
+JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'change-in-production')
+JWT_ALGORITHM = os.environ.get('JWT_ALGORITHM', 'HS256')
 
 # Initialize Kafka producer
 def create_kafka_producer():
@@ -62,6 +81,57 @@ def create_kafka_producer():
                 return None
 
 kafka_producer = create_kafka_producer()
+
+# Initialize S3 client
+def create_s3_client():
+    """Create S3 client"""
+    try:
+        if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
+            s3_client = boto3.client(
+                's3',
+                region_name=AWS_REGION,
+                aws_access_key_id=AWS_ACCESS_KEY_ID,
+                aws_secret_access_key=AWS_SECRET_ACCESS_KEY
+            )
+        else:
+            # Use IAM role if running in AWS
+            s3_client = boto3.client('s3', region_name=AWS_REGION)
+        
+        logger.info("S3 client initialized successfully")
+        return s3_client
+    except Exception as e:
+        logger.error(f"Failed to initialize S3 client: {e}")
+        return None
+
+s3_client = create_s3_client()
+
+# Initialize LangChain LLM with OpenRouter
+def create_llm():
+    """Create LangChain LLM instance with OpenRouter (free model)"""
+    if not OPENROUTER_API_KEY:
+        logger.warning("OpenRouter API key not configured")
+        return None
+    
+    try:
+        llm = ChatOpenAI(
+            model=OPENROUTER_MODEL,
+            temperature=0.7,
+            openai_api_key=OPENROUTER_API_KEY,
+            openai_api_base="https://openrouter.ai/api/v1",
+            model_kwargs={
+                "headers": {
+                    "HTTP-Referer": "https://quiz-service.local",
+                    "X-Title": "Quiz Service"
+                }
+            }
+        )
+        logger.info(f"LangChain LLM initialized successfully with OpenRouter model: {OPENROUTER_MODEL}")
+        return llm
+    except Exception as e:
+        logger.error(f"Failed to initialize LLM: {e}")
+        return None
+
+llm = create_llm()
 
 
 def get_db_connection():
@@ -166,9 +236,134 @@ def init_database():
 init_database()
 
 
+# Kafka Consumer for quiz.requested and notes.generated
+def start_kafka_consumer():
+    """Start Kafka consumer in background thread"""
+    def consume_messages():
+        max_retries = 5
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                consumer = KafkaConsumer(
+                    KAFKA_TOPIC_REQUEST,
+                    KAFKA_TOPIC_NOTES_GENERATED,
+                    bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+                    value_deserializer=lambda m: json.loads(m.decode('utf-8')),
+                    group_id='quiz-service-group',
+                    auto_offset_reset='earliest',
+                    enable_auto_commit=True
+                )
+                
+                logger.info("Kafka consumer started successfully")
+                
+                for message in consumer:
+                    try:
+                        topic = message.topic
+                        data = message.value
+                        
+                        logger.info(f"Received message from {topic}: {data}")
+                        
+                        if topic == KAFKA_TOPIC_REQUEST:
+                            handle_quiz_requested(data)
+                        elif topic == KAFKA_TOPIC_NOTES_GENERATED:
+                            handle_notes_generated(data)
+                            
+                    except Exception as e:
+                        logger.error(f"Error processing message: {e}")
+                        
+            except Exception as e:
+                logger.warning(f"Kafka consumer attempt {attempt + 1} failed: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(retry_delay)
+                else:
+                    logger.error("Failed to start Kafka consumer after all retries")
+                    break
+    
+    consumer_thread = threading.Thread(target=consume_messages, daemon=True)
+    consumer_thread.start()
+    logger.info("Kafka consumer thread started")
+
+
+def handle_quiz_requested(data):
+    """Handle quiz.requested event"""
+    try:
+        document_id = data.get('document_id')
+        user_id = data.get('user_id')
+        logger.info(f"Processing quiz request for document {document_id} by user {user_id}")
+        # Additional processing logic can be added here
+    except Exception as e:
+        logger.error(f"Error handling quiz.requested: {e}")
+
+
+def handle_notes_generated(data):
+    """Handle notes.generated event"""
+    try:
+        document_id = data.get('document_id')
+        notes_content = data.get('notes_content', '')
+        logger.info(f"Notes generated for document {document_id}, can use for quiz generation")
+        # Can cache or use notes content for better quiz generation
+    except Exception as e:
+        logger.error(f"Error handling notes.generated: {e}")
+
+
+# Start Kafka consumer on startup
+start_kafka_consumer()
+
+
+def upload_to_s3(content, key):
+    """Upload content to S3 bucket"""
+    if not s3_client:
+        logger.error("S3 client not initialized")
+        return False
+    
+    try:
+        s3_client.put_object(
+            Bucket=S3_BUCKET_NAME,
+            Key=key,
+            Body=json.dumps(content),
+            ContentType='application/json'
+        )
+        logger.info(f"Uploaded to S3: {key}")
+        return True
+    except ClientError as e:
+        logger.error(f"S3 upload error: {e}")
+        return False
+
+
+def download_from_s3(key):
+    """Download content from S3 bucket"""
+    if not s3_client:
+        logger.error("S3 client not initialized")
+        return None
+    
+    try:
+        response = s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=key)
+        content = json.loads(response['Body'].read().decode('utf-8'))
+        return content
+    except ClientError as e:
+        logger.error(f"S3 download error: {e}")
+        return None
+
+
+def delete_from_s3(key):
+    """Delete content from S3 bucket"""
+    if not s3_client:
+        logger.error("S3 client not initialized")
+        return False
+    
+    try:
+        s3_client.delete_object(Bucket=S3_BUCKET_NAME, Key=key)
+        logger.info(f"Deleted from S3: {key}")
+        return True
+    except ClientError as e:
+        logger.error(f"S3 delete error: {e}")
+        return False
+
+
 def generate_quiz_questions(document_text, num_questions=5, difficulty='medium'):
     """
-    Generate quiz questions from document text (placeholder - integrate with AI)
+    Generate quiz questions from document text using AI
     
     Args:
         document_text: Document text content
@@ -178,29 +373,119 @@ def generate_quiz_questions(document_text, num_questions=5, difficulty='medium')
     Returns:
         list: List of question dictionaries
     """
-    # This is a placeholder. In production, integrate with:
-    # - Amazon Bedrock
-    # - OpenAI API
-    # - Anthropic Claude
-    # - Custom trained model
+    if not llm:
+        logger.warning("LLM not initialized, using fallback generation")
+        return generate_fallback_questions(num_questions, difficulty)
     
-    # Generate sample questions based on document
+    try:
+        # Create prompt template for question generation
+        prompt_template = PromptTemplate(
+            input_variables=["document_text", "num_questions", "difficulty"],
+            template="""
+You are an expert educator creating quiz questions from educational content.
+
+Document Content:
+{document_text}
+
+Generate {num_questions} {difficulty} level quiz questions. Include a mix of:
+- Multiple choice questions (4 options each)
+- True/False questions
+- Short answer questions
+
+For each question, provide:
+1. Question text
+2. Question type (multiple_choice, true_false, or short_answer)
+3. Options (for multiple_choice: array of 4 options, for true_false: ["True", "False"])
+4. Correct answer
+5. Brief explanation
+
+Return ONLY a valid JSON array with this structure:
+[
+  {{
+    "question_text": "Question here?",
+    "question_type": "multiple_choice",
+    "options": ["Option A", "Option B", "Option C", "Option D"],
+    "correct_answer": "Option A",
+    "explanation": "Explanation here"
+  }}
+]
+"""
+        )
+        
+        # Create chain
+        chain = LLMChain(llm=llm, prompt=prompt_template)
+        
+        # Generate questions
+        result = chain.run(
+            document_text=document_text[:4000],  # Limit context length
+            num_questions=num_questions,
+            difficulty=difficulty
+        )
+        
+        # Parse JSON response
+        questions_data = json.loads(result.strip())
+        
+        # Format questions with points
+        questions = []
+        for q in questions_data:
+            question = {
+                'question_text': q['question_text'],
+                'question_type': q.get('question_type', 'multiple_choice'),
+                'options': q.get('options', []),
+                'correct_answer': q['correct_answer'],
+                'explanation': q.get('explanation', ''),
+                'points': 1 if difficulty == 'easy' else 2 if difficulty == 'medium' else 3
+            }
+            questions.append(question)
+        
+        return questions[:num_questions]
+        
+    except Exception as e:
+        logger.error(f"AI question generation error: {e}")
+        return generate_fallback_questions(num_questions, difficulty)
+
+
+def generate_fallback_questions(num_questions=5, difficulty='medium'):
+    """Generate fallback questions when AI is unavailable"""
     questions = []
+    question_types = ['multiple_choice', 'true_false', 'short_answer']
     
     for i in range(num_questions):
-        question = {
-            'question_text': f"Question {i + 1} about the document content: What is the main topic discussed?",
-            'question_type': 'multiple_choice',
-            'options': [
-                'Option A: First possible answer',
-                'Option B: Second possible answer',
-                'Option C: Third possible answer',
-                'Option D: Fourth possible answer'
-            ],
-            'correct_answer': 'Option A: First possible answer',
-            'explanation': 'This is the correct answer because...',
-            'points': 1 if difficulty == 'easy' else 2 if difficulty == 'medium' else 3
-        }
+        q_type = question_types[i % len(question_types)]
+        
+        if q_type == 'multiple_choice':
+            question = {
+                'question_text': f"Question {i + 1}: What is the main concept discussed in the document?",
+                'question_type': 'multiple_choice',
+                'options': [
+                    'Option A: First possible answer',
+                    'Option B: Second possible answer',
+                    'Option C: Third possible answer',
+                    'Option D: Fourth possible answer'
+                ],
+                'correct_answer': 'Option A: First possible answer',
+                'explanation': 'This is the correct answer based on the document content.',
+                'points': 1 if difficulty == 'easy' else 2 if difficulty == 'medium' else 3
+            }
+        elif q_type == 'true_false':
+            question = {
+                'question_text': f"Question {i + 1}: The document discusses important concepts. True or False?",
+                'question_type': 'true_false',
+                'options': ['True', 'False'],
+                'correct_answer': 'True',
+                'explanation': 'This statement is true based on the document content.',
+                'points': 1 if difficulty == 'easy' else 2 if difficulty == 'medium' else 3
+            }
+        else:  # short_answer
+            question = {
+                'question_text': f"Question {i + 1}: Briefly explain the main topic of the document.",
+                'question_type': 'short_answer',
+                'options': [],
+                'correct_answer': 'The main topic is...',
+                'explanation': 'Key points should include...',
+                'points': 2 if difficulty == 'easy' else 3 if difficulty == 'medium' else 5
+            }
+        
         questions.append(question)
     
     return questions
@@ -264,7 +549,7 @@ def readiness_check():
     return jsonify({'status': 'ready'}), 200
 
 
-@app.route('/api/v1/quizzes/generate', methods=['POST'])
+@app.route('/api/quiz/generate', methods=['POST'])
 def generate_quiz():
     """
     Generate quiz from document
@@ -370,6 +655,17 @@ def generate_quiz():
             cursor.close()
             conn.close()
             
+            # Upload quiz template to S3
+            s3_key = f"quizzes/{quiz_id}/template.json"
+            quiz_template = {
+                'quiz_id': quiz_id,
+                'title': title,
+                'difficulty': difficulty,
+                'questions': questions,
+                'created_at': datetime.utcnow().isoformat()
+            }
+            upload_to_s3(quiz_template, s3_key)
+            
         except Exception as e:
             logger.error(f"Database error: {e}")
             if conn:
@@ -404,7 +700,7 @@ def generate_quiz():
         return jsonify({'error': 'Internal server error'}), 500
 
 
-@app.route('/api/v1/quizzes/<quiz_id>', methods=['GET'])
+@app.route('/api/quiz/<quiz_id>', methods=['GET'])
 def get_quiz(quiz_id):
     """Get quiz with questions"""
     try:
@@ -485,7 +781,7 @@ def get_quiz(quiz_id):
         return jsonify({'error': 'Internal server error'}), 500
 
 
-@app.route('/api/v1/quizzes/<quiz_id>/submit', methods=['POST'])
+@app.route('/api/quiz/<quiz_id>/submit', methods=['POST'])
 def submit_quiz(quiz_id):
     """
     Submit quiz answers
@@ -602,7 +898,7 @@ def submit_quiz(quiz_id):
         return jsonify({'error': 'Internal server error'}), 500
 
 
-@app.route('/api/v1/quizzes', methods=['GET'])
+@app.route('/api/quiz/list', methods=['GET'])
 def list_quizzes():
     """List user quizzes"""
     try:
@@ -679,6 +975,274 @@ def list_quizzes():
         
     except Exception as e:
         logger.error(f"Unexpected error in list_quizzes: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.route('/api/quiz/<quiz_id>/results', methods=['GET'])
+def get_quiz_results(quiz_id):
+    """Get quiz results and feedback for a specific quiz"""
+    try:
+        user_id = request.args.get('user_id')
+        
+        if not user_id:
+            return jsonify({'error': 'Missing required parameter: user_id'}), 400
+        
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({'error': 'Database connection failed'}), 503
+        
+        try:
+            cursor = conn.cursor()
+            
+            # Get quiz info
+            cursor.execute(
+                "SELECT quiz_id, title, difficulty FROM quizzes WHERE quiz_id = %s",
+                (quiz_id,)
+            )
+            quiz = cursor.fetchone()
+            
+            if not quiz:
+                cursor.close()
+                conn.close()
+                return jsonify({'error': 'Quiz not found'}), 404
+            
+            # Get all submissions for this user and quiz
+            cursor.execute(
+                """
+                SELECT submission_id, answers, score, max_score, submitted_at
+                FROM quiz_submissions
+                WHERE quiz_id = %s AND user_id = %s
+                ORDER BY submitted_at DESC
+                """,
+                (quiz_id, user_id)
+            )
+            submissions = cursor.fetchall()
+            
+            if not submissions:
+                cursor.close()
+                conn.close()
+                return jsonify({'error': 'No submissions found'}), 404
+            
+            # Get questions with correct answers and explanations
+            cursor.execute(
+                """
+                SELECT question_id, question_text, question_type, options, 
+                       correct_answer, explanation, points
+                FROM questions
+                WHERE quiz_id = %s
+                ORDER BY question_id
+                """,
+                (quiz_id,)
+            )
+            questions = cursor.fetchall()
+            
+            cursor.close()
+            conn.close()
+            
+            # Format submissions with detailed feedback
+            submissions_list = []
+            for sub in submissions:
+                answers = sub['answers']
+                question_results = []
+                
+                for q in questions:
+                    question_id = q['question_id']
+                    user_answer = answers.get(question_id, '')
+                    is_correct = user_answer == q['correct_answer']
+                    
+                    question_results.append({
+                        'question_id': question_id,
+                        'question_text': q['question_text'],
+                        'question_type': q['question_type'],
+                        'user_answer': user_answer,
+                        'correct_answer': q['correct_answer'],
+                        'is_correct': is_correct,
+                        'explanation': q['explanation'],
+                        'points_earned': q['points'] if is_correct else 0,
+                        'points_possible': q['points']
+                    })
+                
+                submissions_list.append({
+                    'submission_id': sub['submission_id'],
+                    'score': sub['score'],
+                    'max_score': sub['max_score'],
+                    'percentage': round((sub['score'] / sub['max_score'] * 100), 2) if sub['max_score'] > 0 else 0,
+                    'submitted_at': sub['submitted_at'].isoformat(),
+                    'question_results': question_results
+                })
+            
+            return jsonify({
+                'quiz_id': quiz['quiz_id'],
+                'title': quiz['title'],
+                'difficulty': quiz['difficulty'],
+                'submissions': submissions_list,
+                'total_attempts': len(submissions),
+                'best_score': max([s['score'] for s in submissions]),
+                'best_percentage': max([s['score'] / s['max_score'] * 100 for s in submissions]) if submissions else 0
+            }), 200
+            
+        except Exception as e:
+            logger.error(f"Database error: {e}")
+            if conn:
+                conn.close()
+            return jsonify({'error': 'Failed to get quiz results'}), 500
+        
+    except Exception as e:
+        logger.error(f"Unexpected error in get_quiz_results: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.route('/api/quiz/history', methods=['GET'])
+def get_quiz_history():
+    """Get user's quiz history with scores"""
+    try:
+        user_id = request.args.get('user_id')
+        
+        if not user_id:
+            return jsonify({'error': 'Missing required parameter: user_id'}), 400
+        
+        limit = request.args.get('limit', 50, type=int)
+        offset = request.args.get('offset', 0, type=int)
+        
+        if limit > 100:
+            limit = 100
+        
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({'error': 'Database connection failed'}), 503
+        
+        try:
+            cursor = conn.cursor()
+            
+            # Get quiz history with latest submission info
+            cursor.execute(
+                """
+                SELECT 
+                    q.quiz_id,
+                    q.document_id,
+                    q.title,
+                    q.difficulty,
+                    q.created_at,
+                    COUNT(DISTINCT qs.submission_id) as total_attempts,
+                    MAX(qs.score) as best_score,
+                    MAX(qs.max_score) as max_score,
+                    MAX(qs.submitted_at) as last_attempt
+                FROM quizzes q
+                LEFT JOIN quiz_submissions qs ON q.quiz_id = qs.quiz_id AND qs.user_id = %s
+                WHERE q.user_id = %s
+                GROUP BY q.quiz_id, q.document_id, q.title, q.difficulty, q.created_at
+                ORDER BY last_attempt DESC NULLS LAST, q.created_at DESC
+                LIMIT %s OFFSET %s
+                """,
+                (user_id, user_id, limit, offset)
+            )
+            history = cursor.fetchall()
+            
+            # Get total count
+            cursor.execute(
+                "SELECT COUNT(*) as total FROM quizzes WHERE user_id = %s",
+                (user_id,)
+            )
+            total = cursor.fetchone()['total']
+            
+            cursor.close()
+            conn.close()
+            
+            # Format history
+            history_list = []
+            for item in history:
+                history_item = {
+                    'quiz_id': item['quiz_id'],
+                    'document_id': item['document_id'],
+                    'title': item['title'],
+                    'difficulty': item['difficulty'],
+                    'created_at': item['created_at'].isoformat(),
+                    'total_attempts': item['total_attempts'],
+                    'best_score': item['best_score'],
+                    'max_score': item['max_score'],
+                    'best_percentage': round((item['best_score'] / item['max_score'] * 100), 2) if item['max_score'] else None,
+                    'last_attempt': item['last_attempt'].isoformat() if item['last_attempt'] else None,
+                    'status': 'completed' if item['total_attempts'] > 0 else 'not_started'
+                }
+                history_list.append(history_item)
+            
+            return jsonify({
+                'history': history_list,
+                'total': total,
+                'limit': limit,
+                'offset': offset
+            }), 200
+            
+        except Exception as e:
+            logger.error(f"Database error: {e}")
+            if conn:
+                conn.close()
+            return jsonify({'error': 'Failed to get quiz history'}), 500
+        
+    except Exception as e:
+        logger.error(f"Unexpected error in get_quiz_history: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.route('/api/quiz/<quiz_id>', methods=['DELETE'])
+def delete_quiz(quiz_id):
+    """Delete quiz and all associated data"""
+    try:
+        user_id = request.args.get('user_id')
+        
+        if not user_id:
+            return jsonify({'error': 'Missing required parameter: user_id'}), 400
+        
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({'error': 'Database connection failed'}), 503
+        
+        try:
+            cursor = conn.cursor()
+            
+            # Check if quiz exists and belongs to user
+            cursor.execute(
+                "SELECT quiz_id, user_id FROM quizzes WHERE quiz_id = %s",
+                (quiz_id,)
+            )
+            quiz = cursor.fetchone()
+            
+            if not quiz:
+                cursor.close()
+                conn.close()
+                return jsonify({'error': 'Quiz not found'}), 404
+            
+            if quiz['user_id'] != user_id:
+                cursor.close()
+                conn.close()
+                return jsonify({'error': 'Unauthorized to delete this quiz'}), 403
+            
+            # Delete from database (cascade will handle questions and submissions)
+            cursor.execute("DELETE FROM quizzes WHERE quiz_id = %s", (quiz_id,))
+            conn.commit()
+            
+            cursor.close()
+            conn.close()
+            
+            # Delete from S3
+            s3_key = f"quizzes/{quiz_id}/template.json"
+            delete_from_s3(s3_key)
+            
+            logger.info(f"Quiz deleted: {quiz_id}")
+            
+            return jsonify({
+                'message': 'Quiz deleted successfully',
+                'quiz_id': quiz_id
+            }), 200
+            
+        except Exception as e:
+            logger.error(f"Database error: {e}")
+            if conn:
+                conn.close()
+            return jsonify({'error': 'Failed to delete quiz'}), 500
+        
+    except Exception as e:
+        logger.error(f"Unexpected error in delete_quiz: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
