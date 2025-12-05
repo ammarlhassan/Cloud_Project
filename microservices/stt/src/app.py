@@ -36,12 +36,11 @@ KAFKA_TOPIC_REQUEST = 'audio.transcription.requested'
 KAFKA_TOPIC_COMPLETED = 'audio.transcription.completed'
 
 # Database configuration
-DB_HOST = os.environ.get('DB_HOST', 'localhost')
+DB_HOST = os.environ.get('DB_HOST', 'cloud-project-db.czuu68se8miq.us-east-1.rds.amazonaws.com')
 DB_PORT = os.environ.get('DB_PORT', '5432')
-DB_NAME = os.environ.get('DB_NAME', 'stt_db')
+DB_NAME = os.environ.get('DB_NAME', 'stt_service')
 DB_USER = os.environ.get('DB_USER', 'postgres')
-DB_PASSWORD = os.environ.get('DB_PASSWORD', 'postgres')
-
+DB_PASSWORD = os.environ.get('DB_PASSWORD', 'MySecurePassword123!')
 # Audio retention configuration
 AUDIO_RETENTION_DAYS = int(os.environ.get('AUDIO_RETENTION_DAYS', '30'))
 
