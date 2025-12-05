@@ -1,0 +1,916 @@
+openapi: 3.0.3
+info:
+  title: Learner Lab API Gateway
+  description: |
+    API Gateway for the Cloud Learning Platform microservices.
+    
+    ## Authentication
+    All endpoints (except `/auth/login` and `/health`) require JWT authentication.
+    Include the token in the Authorization header: `Bearer <token>`
+    
+    ## Rate Limiting
+    - Default: 100 requests per 60 seconds per IP
+    - Exceeded limits return HTTP 429
+    
+    ## Services
+    - **TTS**: Text-to-Speech using AWS Polly
+    - **STT**: Speech-to-Text using AWS Transcribe
+    - **Chat**: Conversation session management
+    - **Document**: PDF processing with AWS Textract
+    - **Quiz**: Quiz generation and grading
+  version: 1.0.0
+  contact:
+    name: CSE363 Cloud Project Team
+    url: https://github.com/ammarlhassan/Cloud_Project
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:5000
+    description: Local development
+  - url: http://api-gateway:5000
+    description: Docker Compose
+  - url: https://api.learnerlab.example.com
+    description: Production (placeholder)
+
+tags:
+  - name: Authentication
+    description: User authentication and token management
+  - name: Health
+    description: Service health checks
+  - name: TTS
+    description: Text-to-Speech service
+  - name: STT
+    description: Speech-to-Text service
+  - name: Chat
+    description: Chat session management
+  - name: Document
+    description: Document processing
+  - name: Quiz
+    description: Quiz generation and grading
+
+paths:
+  # ==========================================================================
+  # Health & Authentication
+  # ==========================================================================
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      description: Returns the health status of the API Gateway
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: healthy
+                service: api-gateway
+                timestamp: "2025-12-05T10:30:00Z"
+
+  /auth/login:
+    post:
+      tags: [Authentication]
+      summary: User login
+      description: Authenticate user and receive JWT token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              username: student@university.edu
+              password: securepassword123
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+              example:
+                token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                expires_in: 86400
+                token_type: Bearer
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Refresh JWT token
+      description: Get a new token using a valid existing token
+      responses:
+        '200':
+          description: Token refreshed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Invalid or expired token
+
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      summary: User logout
+      description: Invalidate the current JWT token
+      responses:
+        '200':
+          description: Logout successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Successfully logged out
+
+  # ==========================================================================
+  # TTS Service
+  # ==========================================================================
+  /api/tts/synthesize:
+    post:
+      tags: [TTS]
+      summary: Convert text to speech
+      description: Synthesize speech from text using AWS Polly
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TTSSynthesizeRequest'
+            example:
+              text: "Hello, welcome to the learning platform."
+              voice_id: Joanna
+              output_format: mp3
+      responses:
+        '200':
+          description: Audio generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TTSResponse'
+              example:
+                audio_url: https://s3.amazonaws.com/bucket/audio/abc123.mp3
+                duration: 3.5
+                format: mp3
+        '400':
+          description: Invalid request
+        '429':
+          description: Rate limit exceeded
+
+  /api/tts/voices:
+    get:
+      tags: [TTS]
+      summary: List available voices
+      description: Get list of available AWS Polly voices
+      responses:
+        '200':
+          description: List of voices
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  voices:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Voice'
+
+  # ==========================================================================
+  # STT Service
+  # ==========================================================================
+  /api/stt/transcribe:
+    post:
+      tags: [STT]
+      summary: Convert speech to text
+      description: Transcribe audio file using AWS Transcribe
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                audio:
+                  type: string
+                  format: binary
+                  description: Audio file (mp3, wav, flac)
+                language:
+                  type: string
+                  default: en-US
+      responses:
+        '200':
+          description: Transcription successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/STTResponse'
+              example:
+                transcript: "Hello, this is a test transcription."
+                confidence: 0.95
+                job_id: "job-abc123"
+        '202':
+          description: Transcription job started (async)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  job_id:
+                    type: string
+                  status:
+                    type: string
+                    example: IN_PROGRESS
+
+  /api/stt/jobs/{job_id}:
+    get:
+      tags: [STT]
+      summary: Get transcription job status
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Job status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/STTJobStatus'
+
+  # ==========================================================================
+  # Chat Service
+  # ==========================================================================
+  /api/chat/sessions:
+    get:
+      tags: [Chat]
+      summary: List chat sessions
+      description: Get all chat sessions for the authenticated user
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+      responses:
+        '200':
+          description: List of sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ChatSession'
+                  total:
+                    type: integer
+
+    post:
+      tags: [Chat]
+      summary: Create new chat session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                context:
+                  type: string
+      responses:
+        '201':
+          description: Session created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatSession'
+
+  /api/chat/sessions/{session_id}:
+    get:
+      tags: [Chat]
+      summary: Get chat session
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Session details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatSession'
+        '404':
+          description: Session not found
+
+    delete:
+      tags: [Chat]
+      summary: Delete chat session
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Session deleted
+
+  /api/chat/sessions/{session_id}/messages:
+    get:
+      tags: [Chat]
+      summary: Get messages in session
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of messages
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ChatMessage'
+
+    post:
+      tags: [Chat]
+      summary: Send message
+      parameters:
+        - name: session_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                role:
+                  type: string
+                  enum: [user, assistant]
+                  default: user
+      responses:
+        '201':
+          description: Message sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatMessage'
+
+  # ==========================================================================
+  # Document Service
+  # ==========================================================================
+  /api/documents:
+    get:
+      tags: [Document]
+      summary: List documents
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: List of documents
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documents:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Document'
+
+    post:
+      tags: [Document]
+      summary: Upload document
+      description: Upload a PDF document for processing
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: PDF file (max 10MB)
+                title:
+                  type: string
+      responses:
+        '201':
+          description: Document uploaded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+        '400':
+          description: Invalid file type or size
+
+  /api/documents/{document_id}:
+    get:
+      tags: [Document]
+      summary: Get document details
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Document details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Document'
+
+    delete:
+      tags: [Document]
+      summary: Delete document
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Document deleted
+
+  /api/documents/{document_id}/extract:
+    post:
+      tags: [Document]
+      summary: Extract text from document
+      description: Use AWS Textract to extract text from the document
+      parameters:
+        - name: document_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Text extracted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  text:
+                    type: string
+                  pages:
+                    type: integer
+                  confidence:
+                    type: number
+
+  # ==========================================================================
+  # Quiz Service
+  # ==========================================================================
+  /api/quizzes:
+    get:
+      tags: [Quiz]
+      summary: List quizzes
+      responses:
+        '200':
+          description: List of quizzes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  quizzes:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Quiz'
+
+    post:
+      tags: [Quiz]
+      summary: Create quiz
+      description: Generate a quiz from document content
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateQuizRequest'
+      responses:
+        '201':
+          description: Quiz created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quiz'
+
+  /api/quizzes/{quiz_id}:
+    get:
+      tags: [Quiz]
+      summary: Get quiz
+      parameters:
+        - name: quiz_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Quiz details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quiz'
+
+  /api/quizzes/{quiz_id}/submit:
+    post:
+      tags: [Quiz]
+      summary: Submit quiz answers
+      parameters:
+        - name: quiz_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuizSubmission'
+      responses:
+        '200':
+          description: Quiz graded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuizResult'
+
+  /api/quizzes/{quiz_id}/results:
+    get:
+      tags: [Quiz]
+      summary: Get quiz results
+      parameters:
+        - name: quiz_id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Quiz results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuizResult'
+
+# ==========================================================================
+# Components
+# ==========================================================================
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token obtained from /auth/login
+
+  schemas:
+    # Health
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, unhealthy]
+        service:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+
+    # Auth
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+          minLength: 8
+
+    LoginResponse:
+      type: object
+      properties:
+        token:
+          type: string
+        expires_in:
+          type: integer
+          description: Token validity in seconds
+        token_type:
+          type: string
+          example: Bearer
+
+    # TTS
+    TTSSynthesizeRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          maxLength: 3000
+        voice_id:
+          type: string
+          default: Joanna
+        output_format:
+          type: string
+          enum: [mp3, ogg_vorbis, pcm]
+          default: mp3
+        language_code:
+          type: string
+          default: en-US
+
+    TTSResponse:
+      type: object
+      properties:
+        audio_url:
+          type: string
+          format: uri
+        duration:
+          type: number
+        format:
+          type: string
+
+    Voice:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        language:
+          type: string
+        gender:
+          type: string
+          enum: [Male, Female]
+
+    # STT
+    STTResponse:
+      type: object
+      properties:
+        transcript:
+          type: string
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        job_id:
+          type: string
+
+    STTJobStatus:
+      type: object
+      properties:
+        job_id:
+          type: string
+        status:
+          type: string
+          enum: [QUEUED, IN_PROGRESS, COMPLETED, FAILED]
+        transcript:
+          type: string
+        error:
+          type: string
+
+    # Chat
+    ChatSession:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+        title:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        message_count:
+          type: integer
+
+    ChatMessage:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        session_id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [user, assistant, system]
+        content:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    # Document
+    Document:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        filename:
+          type: string
+        file_size:
+          type: integer
+        mime_type:
+          type: string
+        s3_key:
+          type: string
+        status:
+          type: string
+          enum: [uploaded, processing, processed, error]
+        page_count:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    # Quiz
+    Quiz:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          type: string
+        document_id:
+          type: string
+          format: uuid
+        questions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Question'
+        time_limit:
+          type: integer
+          description: Time limit in minutes
+        created_at:
+          type: string
+          format: date-time
+
+    Question:
+      type: object
+      properties:
+        id:
+          type: string
+        question:
+          type: string
+        type:
+          type: string
+          enum: [multiple_choice, true_false, short_answer]
+        options:
+          type: array
+          items:
+            type: string
+        points:
+          type: integer
+          default: 1
+
+    CreateQuizRequest:
+      type: object
+      required: [document_id]
+      properties:
+        document_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        num_questions:
+          type: integer
+          default: 10
+        question_types:
+          type: array
+          items:
+            type: string
+            enum: [multiple_choice, true_false, short_answer]
+
+    QuizSubmission:
+      type: object
+      required: [answers]
+      properties:
+        answers:
+          type: array
+          items:
+            type: object
+            properties:
+              question_id:
+                type: string
+              answer:
+                type: string
+
+    QuizResult:
+      type: object
+      properties:
+        quiz_id:
+          type: string
+          format: uuid
+        score:
+          type: number
+        total_points:
+          type: integer
+        percentage:
+          type: number
+        passed:
+          type: boolean
+        answers:
+          type: array
+          items:
+            type: object
+            properties:
+              question_id:
+                type: string
+              correct:
+                type: boolean
+              user_answer:
+                type: string
+              correct_answer:
+                type: string
+
+    # Error
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        status_code:
+          type: integer
+
+security:
+  - BearerAuth: []
