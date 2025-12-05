@@ -6,6 +6,8 @@ import os
 import json
 import logging
 import uuid
+import signal
+import sys
 from datetime import datetime
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -18,6 +20,8 @@ from kafka.errors import KafkaError
 import time
 import PyPDF2
 import io
+from docx import Document
+import requests
 
 # Configure logging
 logging.basicConfig(
@@ -31,16 +35,19 @@ CORS(app)
 
 # Environment configuration
 AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
-S3_BUCKET = os.environ.get('S3_BUCKET_DOCUMENTS', 'learning-platform-documents')
-DB_HOST = os.environ.get('DB_HOST', 'localhost')
+S3_BUCKET = os.environ.get('S3_BUCKET_DOCUMENTS', 'document-reader-storage-dev-199892543493')
+DB_HOST = os.environ.get('DB_HOST', 'cloud-project-db.czuu68se8miq.us-east-1.rds.amazonaws.com')
 DB_PORT = os.environ.get('DB_PORT', '5432')
-DB_NAME = os.environ.get('DB_NAME', 'document_db')
+DB_NAME = os.environ.get('DB_NAME', 'document_reader')
 DB_USER = os.environ.get('DB_USER', 'postgres')
-DB_PASSWORD = os.environ.get('DB_PASSWORD', 'postgres')
+DB_PASSWORD = os.environ.get('DB_PASSWORD', 'MySecurePassword123!')
 KAFKA_BOOTSTRAP_SERVERS = os.environ.get('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092').split(',')
 KAFKA_TOPIC_UPLOADED = 'document.uploaded'
 KAFKA_TOPIC_PROCESSED = 'document.processed'
 KAFKA_TOPIC_NOTES = 'notes.generated'
+
+# OpenRouter configuration
+OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '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')
 
 # Initialize AWS clients
 try:
@@ -78,6 +85,30 @@ def create_kafka_producer():
                 return None
 
 kafka_producer = create_kafka_producer()
+
+# Initialize OpenRouter API
+openrouter_available = bool(OPENROUTER_API_KEY)
+if openrouter_available:
+    logger.info("OpenRouter API configured successfully")
+else:
+    logger.warning("OpenRouter API key not configured")
+
+
+def signal_handler(sig, frame):
+    """Handle shutdown signals for graceful termination"""
+    logger.info(f"Received signal {sig}, initiating graceful shutdown...")
+    
+    # Close Kafka producer
+    if kafka_producer:
+        kafka_producer.close()
+        logger.info("Kafka producer closed")
+    
+    sys.exit(0)
+
+
+# Register signal handlers for graceful shutdown
+signal.signal(signal.SIGTERM, signal_handler)
+signal.signal(signal.SIGINT, signal_handler)
 
 
 def get_db_connection():
@@ -216,9 +247,46 @@ def extract_text_from_pdf(file_data):
         return None
 
 
+def extract_text_from_docx(file_data):
+    """
+    Extract text from DOCX file
+    
+    Args:
+        file_data: DOCX file binary data
+    
+    Returns:
+        str: Extracted text or None on error
+    """
+    try:
+        docx_file = io.BytesIO(file_data)
+        document = Document(docx_file)
+        
+        text_content = []
+        # Extract text from paragraphs
+        for paragraph in document.paragraphs:
+            if paragraph.text.strip():
+                text_content.append(paragraph.text)
+        
+        # Extract text from tables
+        for table in document.tables:
+            for row in table.rows:
+                for cell in row.cells:
+                    if cell.text.strip():
+                        text_content.append(cell.text)
+        
+        extracted_text = '\n'.join(text_content)
+        logger.info(f"Extracted {len(extracted_text)} characters from DOCX")
+        
+        return extracted_text
+        
+    except Exception as e:
+        logger.error(f"DOCX extraction error: {e}")
+        return None
+
+
 def generate_notes_from_text(text, max_length=1000):
     """
-    Generate notes from text (placeholder - integrate with AI service)
+    Generate notes from text using OpenRouter AI
     
     Args:
         text: Document text
@@ -227,17 +295,79 @@ def generate_notes_from_text(text, max_length=1000):
     Returns:
         str: Generated notes
     """
-    # This is a placeholder. In production, integrate with:
-    # - Amazon Bedrock
-    # - OpenAI API
-    # - Anthropic Claude
-    # - Custom trained model
+    # Use OpenRouter API if available
+    if openrouter_available:
+        try:
+            # Truncate text if too long
+            max_input_chars = 12000  # Roughly 3000 tokens
+            input_text = text[:max_input_chars] if len(text) > max_input_chars else text
+            
+            prompt = f"""Analyze the following document and create comprehensive study notes. 
+Include:
+1. Main topics and key concepts
+2. Important details and definitions
+3. Key takeaways
+4. Summary of main points
+
+Document:
+{input_text}
+
+Provide well-structured notes:"""
+            
+            headers = {
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "model": "amazon/nova-2-lite-v1:free",
+                "messages": [
+                    {"role": "system", "content": "You are an expert at creating clear, concise study notes from documents. Create organized, easy-to-understand notes."},
+                    {"role": "user", "content": prompt}
+                ],
+                "max_tokens": 1500,
+                "temperature": 0.3
+            }
+            
+            response = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers,
+                json=payload,
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                notes = result['choices'][0]['message']['content']
+                logger.info(f"Generated AI notes: {len(notes)} characters")
+                return notes
+            else:
+                logger.error(f"OpenRouter API error: {response.status_code} - {response.text}")
+                # Fall back to simple summary
+            
+        except Exception as e:
+            logger.error(f"AI note generation error: {e}")
+            # Fall back to simple summary
     
-    # Simple summary: take first N characters
+    # Fallback: Simple summary if AI is not available
     if len(text) <= max_length:
         notes = f"Document Summary:\n\n{text}"
     else:
-        notes = f"Document Summary:\n\n{text[:max_length]}...\n\n[Content truncated for brevity]"
+        # Create a basic summary
+        lines = text.split('\n')
+        summary_lines = []
+        char_count = 0
+        
+        for line in lines:
+            if char_count + len(line) > max_length:
+                break
+            if line.strip():
+                summary_lines.append(line)
+                char_count += len(line)
+        
+        notes = f"Document Summary:\n\n" + '\n'.join(summary_lines)
+        if len(text) > max_length:
+            notes += "\n\n[Content truncated for brevity]"
     
     return notes
 
@@ -288,7 +418,8 @@ def health_check():
             's3': s3_client is not None,
             'textract': textract_client is not None,
             'database': db_healthy,
-            'kafka': kafka_producer is not None
+            'kafka': kafka_producer is not None,
+            'openrouter': openrouter_available
         }
     }
     
@@ -302,7 +433,7 @@ def readiness_check():
     return jsonify({'status': 'ready'}), 200
 
 
-@app.route('/api/v1/documents/upload', methods=['POST'])
+@app.route('/api/documents/upload', methods=['POST'])
 def upload_document():
     """
     Upload document
@@ -368,6 +499,8 @@ def upload_document():
         text_content = None
         if file_extension == 'pdf':
             text_content = extract_text_from_pdf(file_data)
+        elif file_extension in ['docx', 'doc']:
+            text_content = extract_text_from_docx(file_data)
         elif file_extension == 'txt':
             text_content = file_data.decode('utf-8', errors='ignore')
         
@@ -425,9 +558,79 @@ def upload_document():
         return jsonify({'error': 'Internal server error'}), 500
 
 
-@app.route('/api/v1/documents/<document_id>/process', methods=['POST'])
-def process_document(document_id):
-    """Process document and generate notes"""
+@app.route('/api/documents/<document_id>', methods=['GET'])
+def get_document(document_id):
+    """Get document details"""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({'error': 'Database connection failed'}), 503
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM documents WHERE document_id = %s",
+                (document_id,)
+            )
+            document = cursor.fetchone()
+            
+            cursor.close()
+            conn.close()
+            
+            if not document:
+                return jsonify({'error': 'Document not found'}), 404
+            
+            return jsonify(dict(document)), 200
+            
+        except Exception as e:
+            logger.error(f"Database error: {e}")
+            if conn:
+                conn.close()
+            return jsonify({'error': 'Failed to retrieve document'}), 500
+        
+    except Exception as e:
+        logger.error(f"Unexpected error in get_document: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.route('/api/documents/<document_id>/notes', methods=['GET'])
+def get_document_notes(document_id):
+    """Get notes for a document"""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({'error': 'Database connection failed'}), 503
+        
+        try:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT * FROM notes WHERE document_id = %s ORDER BY created_at DESC",
+                (document_id,)
+            )
+            notes = cursor.fetchall()
+            
+            cursor.close()
+            conn.close()
+            
+            return jsonify({
+                'document_id': document_id,
+                'notes': [dict(note) for note in notes]
+            }), 200
+            
+        except Exception as e:
+            logger.error(f"Database error: {e}")
+            if conn:
+                conn.close()
+            return jsonify({'error': 'Failed to retrieve notes'}), 500
+        
+    except Exception as e:
+        logger.error(f"Unexpected error in get_document_notes: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.route('/api/documents/<document_id>/regenerate-notes', methods=['POST'])
+def regenerate_notes(document_id):
+    """Regenerate notes for a document"""
     try:
         # Get document from database
         conn = get_db_connection()
@@ -455,7 +658,7 @@ def process_document(document_id):
                 conn.close()
                 return jsonify({'error': 'No text content available for processing'}), 400
             
-            # Generate notes
+            # Generate new notes
             notes_content = generate_notes_from_text(text_content)
             note_id = str(uuid.uuid4())
             
@@ -498,7 +701,7 @@ def process_document(document_id):
             
             publish_to_kafka(KAFKA_TOPIC_NOTES, notes_event)
             
-            logger.info(f"Document processed: {document_id}")
+            logger.info(f"Notes regenerated for document: {document_id}")
             
             return jsonify({
                 'document_id': document_id,
@@ -510,84 +713,14 @@ def process_document(document_id):
             logger.error(f"Database error: {e}")
             if conn:
                 conn.close()
-            return jsonify({'error': 'Failed to process document'}), 500
+            return jsonify({'error': 'Failed to regenerate notes'}), 500
         
     except Exception as e:
-        logger.error(f"Unexpected error in process_document: {e}")
+        logger.error(f"Unexpected error in regenerate_notes: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
-@app.route('/api/v1/documents/<document_id>', methods=['GET'])
-def get_document(document_id):
-    """Get document details"""
-    try:
-        conn = get_db_connection()
-        if not conn:
-            return jsonify({'error': 'Database connection failed'}), 503
-        
-        try:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT * FROM documents WHERE document_id = %s",
-                (document_id,)
-            )
-            document = cursor.fetchone()
-            
-            cursor.close()
-            conn.close()
-            
-            if not document:
-                return jsonify({'error': 'Document not found'}), 404
-            
-            return jsonify(dict(document)), 200
-            
-        except Exception as e:
-            logger.error(f"Database error: {e}")
-            if conn:
-                conn.close()
-            return jsonify({'error': 'Failed to retrieve document'}), 500
-        
-    except Exception as e:
-        logger.error(f"Unexpected error in get_document: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
-
-
-@app.route('/api/v1/documents/<document_id>/notes', methods=['GET'])
-def get_document_notes(document_id):
-    """Get notes for a document"""
-    try:
-        conn = get_db_connection()
-        if not conn:
-            return jsonify({'error': 'Database connection failed'}), 503
-        
-        try:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT * FROM notes WHERE document_id = %s ORDER BY created_at DESC",
-                (document_id,)
-            )
-            notes = cursor.fetchall()
-            
-            cursor.close()
-            conn.close()
-            
-            return jsonify({
-                'document_id': document_id,
-                'notes': [dict(note) for note in notes]
-            }), 200
-            
-        except Exception as e:
-            logger.error(f"Database error: {e}")
-            if conn:
-                conn.close()
-            return jsonify({'error': 'Failed to retrieve notes'}), 500
-        
-    except Exception as e:
-        logger.error(f"Unexpected error in get_document_notes: {e}")
-        return jsonify({'error': 'Internal server error'}), 500
-
-
-@app.route('/api/v1/documents', methods=['GET'])
+@app.route('/api/documents', methods=['GET'])
 def list_documents():
     """List user documents"""
     try:
@@ -644,6 +777,79 @@ def list_documents():
         
     except Exception as e:
         logger.error(f"Unexpected error in list_documents: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.route('/api/documents/<document_id>', methods=['DELETE'])
+def delete_document(document_id):
+    """Delete a document and its associated data"""
+    try:
+        conn = get_db_connection()
+        if not conn:
+            return jsonify({'error': 'Database connection failed'}), 503
+        
+        try:
+            cursor = conn.cursor()
+            
+            # Get document details for S3 deletion
+            cursor.execute(
+                "SELECT s3_url, user_id FROM documents WHERE document_id = %s",
+                (document_id,)
+            )
+            document = cursor.fetchone()
+            
+            if not document:
+                cursor.close()
+                conn.close()
+                return jsonify({'error': 'Document not found'}), 404
+            
+            s3_url = document['s3_url']
+            user_id = document['user_id']
+            
+            # Delete from S3
+            if s3_client and s3_url.startswith('s3://'):
+                try:
+                    # Extract bucket and key from S3 URL
+                    s3_path = s3_url.replace('s3://', '')
+                    bucket, key = s3_path.split('/', 1)
+                    
+                    s3_client.delete_object(Bucket=bucket, Key=key)
+                    logger.info(f"Deleted S3 object: {s3_url}")
+                except Exception as e:
+                    logger.error(f"Failed to delete S3 object: {e}")
+                    # Continue with database deletion even if S3 fails
+            
+            # Delete notes (cascade should handle this, but explicit delete is safer)
+            cursor.execute(
+                "DELETE FROM notes WHERE document_id = %s",
+                (document_id,)
+            )
+            
+            # Delete document
+            cursor.execute(
+                "DELETE FROM documents WHERE document_id = %s",
+                (document_id,)
+            )
+            
+            conn.commit()
+            cursor.close()
+            conn.close()
+            
+            logger.info(f"Document deleted: {document_id}")
+            
+            return jsonify({
+                'message': 'Document deleted successfully',
+                'document_id': document_id
+            }), 200
+            
+        except Exception as e:
+            logger.error(f"Database error: {e}")
+            if conn:
+                conn.close()
+            return jsonify({'error': 'Failed to delete document'}), 500
+        
+    except Exception as e:
+        logger.error(f"Unexpected error in delete_document: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
