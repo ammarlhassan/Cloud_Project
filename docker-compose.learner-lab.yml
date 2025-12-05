@@ -1,0 +1,770 @@
+version: "3.8"
+
+# =============================================================================
+# CSE363 Phase 2 - Docker Compose for Local Development & Docker Swarm
+# =============================================================================
+#
+# USAGE:
+#   Local Development: docker-compose -f docker-compose.learner-lab.yml up -d
+#   Docker Swarm:      docker stack deploy -c docker-compose.learner-lab.yml learner-lab
+#
+# =============================================================================
+# LIMITATIONS & REQUIREMENTS NOT MET BY DOCKER COMPOSE:
+# =============================================================================
+#
+# 1. READINESS vs LIVENESS PROBES:
+#    - Docker Compose only supports a single healthcheck (liveness)
+#    - Kubernetes required for separate readiness probes
+#    - See kubernetes/ directory for K8s manifests with proper probes
+#
+# 2. HORIZONTAL POD AUTOSCALING (HPA):
+#    - Docker Compose/Swarm cannot auto-scale based on CPU/memory
+#    - Swarm can set static replicas, not dynamic HPA
+#    - Kubernetes required for HPA - see kubernetes/ manifests
+#
+# 3. RESOURCE LIMITS:
+#    - 'deploy.resources' only applies in Docker Swarm mode
+#    - Plain 'docker-compose up' ignores these limits
+#    - Use 'docker-compose --compatibility up' for partial support
+#    - Or use Docker Desktop resource limits
+#
+# 4. VULNERABILITY SCANNING & ECR:
+#    - Image scanning requires external tools (Trivy, Grype, ECR scanning)
+#    - ECR lifecycle policies configured via AWS CLI/Console, not Compose
+#    - See scripts/ecr-setup.sh for ECR configuration
+#
+# 5. PERSISTENT VOLUMES:
+#    - Local named volumes work for Docker/Swarm
+#    - Not Kubernetes PersistentVolumeClaims (PVCs)
+#    - See kubernetes/ directory for PVC definitions
+#
+# =============================================================================
+# REQUIRED ENVIRONMENT VARIABLES (no defaults - must be set):
+# =============================================================================
+# Copy .env.example to .env and set ALL required values before running.
+#
+# AWS Credentials (REQUIRED):
+#   - AWS_ACCESS_KEY_ID
+#   - AWS_SECRET_ACCESS_KEY
+#   - AWS_SESSION_TOKEN
+#
+# Database Credentials (REQUIRED):
+#   - CHAT_DB_USER, CHAT_DB_PASSWORD
+#   - DOCUMENT_DB_USER, DOCUMENT_DB_PASSWORD
+#   - QUIZ_DB_USER, QUIZ_DB_PASSWORD
+#
+# Security (REQUIRED):
+#   - JWT_SECRET
+#
+# =============================================================================
+
+services:
+  # --------------------------------------------------------
+  # ZOOKEEPER
+  # --------------------------------------------------------
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    hostname: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - learner-lab-network
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-logs:/var/lib/zookeeper/log
+    # Liveness check only - Docker Compose doesn't support readiness probes
+    healthcheck:
+      test: ["CMD", "bash", "-c", "echo 'ruok' | nc localhost 2181 | grep imok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: 30s
+    # Resource limits (Swarm mode only, ignored by docker-compose up)
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+
+  # --------------------------------------------------------
+  # KAFKA BROKER
+  # --------------------------------------------------------
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    hostname: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "9093:9093"
+    networks:
+      - learner-lab-network
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 168
+      KAFKA_LOG_SEGMENT_BYTES: 1073741824
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: 60s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 30s
+        failure_action: rollback
+
+  # --------------------------------------------------------
+  # DATABASES (POSTGRES INSTANCES)
+  # Note: Passwords MUST be set via environment variables
+  # --------------------------------------------------------
+
+  chat-db:
+    image: postgres:15-alpine
+    container_name: chat-db
+    hostname: chat-db
+    environment:
+      POSTGRES_DB: chat_db
+      POSTGRES_USER: ${CHAT_DB_USER:?CHAT_DB_USER is required}
+      POSTGRES_PASSWORD: ${CHAT_DB_PASSWORD:?CHAT_DB_PASSWORD is required}
+    ports:
+      - "5432:5432"
+    networks:
+      - learner-lab-network
+    volumes:
+      - chat-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d chat_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+
+  document-db:
+    image: postgres:15-alpine
+    container_name: document-db
+    hostname: document-db
+    environment:
+      POSTGRES_DB: document_db
+      POSTGRES_USER: ${DOCUMENT_DB_USER:?DOCUMENT_DB_USER is required}
+      POSTGRES_PASSWORD: ${DOCUMENT_DB_PASSWORD:?DOCUMENT_DB_PASSWORD is required}
+    ports:
+      - "5433:5432"
+    networks:
+      - learner-lab-network
+    volumes:
+      - document-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d document_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+
+  quiz-db:
+    image: postgres:15-alpine
+    container_name: quiz-db
+    hostname: quiz-db
+    environment:
+      POSTGRES_DB: quiz_db
+      POSTGRES_USER: ${QUIZ_DB_USER:?QUIZ_DB_USER is required}
+      POSTGRES_PASSWORD: ${QUIZ_DB_PASSWORD:?QUIZ_DB_PASSWORD is required}
+    ports:
+      - "5434:5432"
+    networks:
+      - learner-lab-network
+    volumes:
+      - quiz-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d quiz_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+
+  # --------------------------------------------------------
+  # REDIS CACHE
+  # --------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - learner-lab-network
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    stop_grace_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+
+  # --------------------------------------------------------
+  # MICROSERVICES
+  # --------------------------------------------------------
+
+  tts-service:
+    build:
+      context: .
+      dockerfile: docker/dockerfiles/Dockerfile.tts
+      args:
+        VERSION: ${TTS_VERSION:-1.0.0}
+    image: ${ECR_REGISTRY:-localhost}/tts-service:${TTS_VERSION:-1.0.0}
+    container_name: tts-service
+    hostname: tts-service
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "5001:5001"
+    networks:
+      - learner-lab-network
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-learner-lab-audio}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      PORT: 5001
+      DEBUG: "False"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    stop_grace_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        order: start-first
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+
+  stt-service:
+    build:
+      context: .
+      dockerfile: docker/dockerfiles/Dockerfile.stt
+      args:
+        VERSION: ${STT_VERSION:-1.0.0}
+    image: ${ECR_REGISTRY:-localhost}/stt-service:${STT_VERSION:-1.0.0}
+    container_name: stt-service
+    hostname: stt-service
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "5002:5002"
+    networks:
+      - learner-lab-network
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-learner-lab-audio}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      PORT: 5002
+      DEBUG: "False"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    stop_grace_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        order: start-first
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+
+  chat-service:
+    build:
+      context: .
+      dockerfile: docker/dockerfiles/Dockerfile.chat
+      args:
+        VERSION: ${CHAT_VERSION:-1.0.0}
+    image: ${ECR_REGISTRY:-localhost}/chat-service:${CHAT_VERSION:-1.0.0}
+    container_name: chat-service
+    hostname: chat-service
+    depends_on:
+      kafka:
+        condition: service_healthy
+      chat-db:
+        condition: service_healthy
+    ports:
+      - "5003:5003"
+    networks:
+      - learner-lab-network
+    environment:
+      DB_HOST: chat-db
+      DB_PORT: 5432
+      DB_NAME: chat_db
+      DB_USER: ${CHAT_DB_USER:?CHAT_DB_USER is required}
+      DB_PASSWORD: ${CHAT_DB_PASSWORD:?CHAT_DB_PASSWORD is required}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      PORT: 5003
+      DEBUG: "False"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    stop_grace_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        order: start-first
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+
+  document-service:
+    build:
+      context: .
+      dockerfile: docker/dockerfiles/Dockerfile.document
+      args:
+        VERSION: ${DOCUMENT_VERSION:-1.0.0}
+    image: ${ECR_REGISTRY:-localhost}/document-service:${DOCUMENT_VERSION:-1.0.0}
+    container_name: document-service
+    hostname: document-service
+    depends_on:
+      kafka:
+        condition: service_healthy
+      document-db:
+        condition: service_healthy
+    ports:
+      - "5004:5004"
+    networks:
+      - learner-lab-network
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      S3_BUCKET_NAME: ${S3_BUCKET_NAME:-learner-lab-documents}
+      DB_HOST: document-db
+      DB_PORT: 5432
+      DB_NAME: document_db
+      DB_USER: ${DOCUMENT_DB_USER:?DOCUMENT_DB_USER is required}
+      DB_PASSWORD: ${DOCUMENT_DB_PASSWORD:?DOCUMENT_DB_PASSWORD is required}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      PORT: 5004
+      DEBUG: "False"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MAX_FILE_SIZE: ${MAX_FILE_SIZE:-10485760}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    stop_grace_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        order: start-first
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+
+  quiz-service:
+    build:
+      context: .
+      dockerfile: docker/dockerfiles/Dockerfile.quiz
+      args:
+        VERSION: ${QUIZ_VERSION:-1.0.0}
+    image: ${ECR_REGISTRY:-localhost}/quiz-service:${QUIZ_VERSION:-1.0.0}
+    container_name: quiz-service
+    hostname: quiz-service
+    depends_on:
+      kafka:
+        condition: service_healthy
+      quiz-db:
+        condition: service_healthy
+    ports:
+      - "5005:5005"
+    networks:
+      - learner-lab-network
+    environment:
+      DB_HOST: quiz-db
+      DB_PORT: 5432
+      DB_NAME: quiz_db
+      DB_USER: ${QUIZ_DB_USER:?QUIZ_DB_USER is required}
+      DB_PASSWORD: ${QUIZ_DB_PASSWORD:?QUIZ_DB_PASSWORD is required}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      PORT: 5005
+      DEBUG: "False"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    stop_grace_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        order: start-first
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+
+  # --------------------------------------------------------
+  # API GATEWAY
+  # --------------------------------------------------------
+  api-gateway:
+    build:
+      context: .
+      dockerfile: docker/dockerfiles/Dockerfile.gateway
+      args:
+        VERSION: ${GATEWAY_VERSION:-1.0.0}
+    image: ${ECR_REGISTRY:-localhost}/api-gateway:${GATEWAY_VERSION:-1.0.0}
+    container_name: api-gateway
+    hostname: api-gateway
+    depends_on:
+      tts-service:
+        condition: service_healthy
+      stt-service:
+        condition: service_healthy
+      chat-service:
+        condition: service_healthy
+      document-service:
+        condition: service_healthy
+      quiz-service:
+        condition: service_healthy
+    ports:
+      - "5000:5000"
+    networks:
+      - learner-lab-network
+    environment:
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_EXPIRATION_HOURS: ${JWT_EXPIRATION_HOURS:-24}
+      TTS_SERVICE_URL: http://tts-service:5001
+      STT_SERVICE_URL: http://stt-service:5002
+      CHAT_SERVICE_URL: http://chat-service:5003
+      DOCUMENT_SERVICE_URL: http://document-service:5004
+      QUIZ_SERVICE_URL: http://quiz-service:5005
+      RATE_LIMIT_REQUESTS: ${RATE_LIMIT_REQUESTS:-100}
+      RATE_LIMIT_WINDOW: ${RATE_LIMIT_WINDOW:-60}
+      PORT: 5000
+      DEBUG: "False"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-30}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    stop_grace_period: 30s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 3
+        window: 120s
+      update_config:
+        parallelism: 1
+        delay: 10s
+        failure_action: rollback
+        order: start-first
+      rollback_config:
+        parallelism: 1
+        delay: 10s
+
+# --------------------------------------------------------
+# NETWORKS & VOLUMES
+# --------------------------------------------------------
+# NOTE: These are local named volumes, NOT Kubernetes PVCs.
+# For Kubernetes PersistentVolumeClaims, see kubernetes/storage/pvcs.yaml
+# --------------------------------------------------------
+networks:
+  learner-lab-network:
+    driver: bridge
+    name: learner-lab-network
+    # For Docker Swarm, use overlay network:
+    # driver: overlay
+    # attachable: true
+
+# LOCAL VOLUMES (Docker/Swarm only - not K8s PVCs)
+# These provide data persistence for local development and Docker Swarm.
+# For production Kubernetes, use PersistentVolumeClaims instead.
+volumes:
+  zookeeper-data:
+    driver: local
+  zookeeper-logs:
+    driver: local
+  kafka-data:
+    driver: local
+  chat-db-data:
+    driver: local
+  document-db-data:
+    driver: local
+  quiz-db-data:
+    driver: local
+  redis-data:
+    driver: local

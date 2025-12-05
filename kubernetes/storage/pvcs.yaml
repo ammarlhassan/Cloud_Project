@@ -1,0 +1,105 @@
+# =============================================================================
+# PersistentVolumeClaims (PVCs) - Kubernetes Only
+# =============================================================================
+# Docker Compose uses local named volumes which are NOT the same as K8s PVCs.
+# These PVCs provide:
+# - Data persistence across pod restarts
+# - Dynamic provisioning on cloud providers (AWS EBS, GCP PD, Azure Disk)
+# - Backup and snapshot capabilities
+# =============================================================================
+
+# Chat Database PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: chat-db-pvc
+  namespace: learner-lab
+  labels:
+    app: chat-db
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: gp2  # AWS EBS General Purpose SSD
+---
+# Document Database PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: document-db-pvc
+  namespace: learner-lab
+  labels:
+    app: document-db
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi  # Larger for document storage
+  storageClassName: gp2
+---
+# Quiz Database PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: quiz-db-pvc
+  namespace: learner-lab
+  labels:
+    app: quiz-db
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: gp2
+---
+# Kafka Data PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: kafka-data-pvc
+  namespace: learner-lab
+  labels:
+    app: kafka
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi  # Kafka needs substantial storage
+  storageClassName: gp2
+---
+# Zookeeper Data PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: zookeeper-data-pvc
+  namespace: learner-lab
+  labels:
+    app: zookeeper
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: gp2
+---
+# Redis Data PVC
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-data-pvc
+  namespace: learner-lab
+  labels:
+    app: redis
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  storageClassName: gp2

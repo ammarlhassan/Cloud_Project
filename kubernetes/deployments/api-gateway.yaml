@@ -1,0 +1,112 @@
+# =============================================================================
+# API Gateway Deployment - Kubernetes
+# =============================================================================
+# Features Docker Compose cannot provide:
+# - Separate readiness probe (not just liveness)
+# - Resource limits enforced (not just Swarm mode)
+# - HPA integration via labels
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: learner-lab
+  labels:
+    app: api-gateway
+    app.kubernetes.io/name: api-gateway
+    app.kubernetes.io/component: gateway
+    app.kubernetes.io/part-of: learner-lab
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api-gateway
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: api-gateway
+          image: ${ECR_REGISTRY}/api-gateway:${GATEWAY_VERSION}
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5000
+              protocol: TCP
+          env:
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: api-gateway-secrets
+                  key: jwt-secret
+            - name: JWT_EXPIRATION_HOURS
+              value: "24"
+            - name: TTS_SERVICE_URL
+              value: "http://tts-service:5001"
+            - name: STT_SERVICE_URL
+              value: "http://stt-service:5002"
+            - name: CHAT_SERVICE_URL
+              value: "http://chat-service:5003"
+            - name: DOCUMENT_SERVICE_URL
+              value: "http://document-service:5004"
+            - name: QUIZ_SERVICE_URL
+              value: "http://quiz-service:5005"
+            - name: RATE_LIMIT_REQUESTS
+              value: "100"
+            - name: RATE_LIMIT_WINDOW
+              value: "60"
+            - name: PORT
+              value: "5000"
+            - name: LOG_LEVEL
+              value: "INFO"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          # LIVENESS PROBE - Is the container running?
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 40
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          # READINESS PROBE - Is the container ready to receive traffic?
+          # Docker Compose does NOT support this - only Kubernetes does
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3
+          securityContext:
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            allowPrivilegeEscalation: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-gateway
+  namespace: learner-lab
+spec:
+  type: LoadBalancer
+  selector:
+    app: api-gateway
+  ports:
+    - port: 80
+      targetPort: 5000
+      protocol: TCP

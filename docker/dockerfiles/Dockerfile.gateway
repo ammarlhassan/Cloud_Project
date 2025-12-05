@@ -1,5 +1,16 @@
 # Multi-stage Dockerfile for API Gateway
-# Stage 1: Build stage
+# Follows CSE363 Phase 2 Containerization Requirements (Section 6.1)
+
+# =============================================================================
+# Build Arguments for versioning and tagging
+# =============================================================================
+ARG VERSION=1.0.0
+ARG BUILD_DATE
+ARG VCS_REF
+
+# =============================================================================
+# Stage 1: Build stage - Install dependencies
+# =============================================================================
 FROM python:3.11-slim as builder
 
 WORKDIR /build
@@ -7,41 +18,119 @@ WORKDIR /build
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
+    libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install dependencies
 COPY api-gateway/src/requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
 
-# Stage 2: Runtime stage
+# =============================================================================
+# Stage 2: Runtime stage - Minimal production image
+# =============================================================================
 FROM python:3.11-slim
 
-# Create non-root user
-RUN useradd -m -u 1000 appuser && \
+# Build arguments for labels
+ARG VERSION=1.0.0
+ARG BUILD_DATE
+ARG VCS_REF
+
+# =============================================================================
+# OCI Image Labels (for vulnerability scanning and image management)
+# =============================================================================
+LABEL org.opencontainers.image.title="API Gateway Service" \
+      org.opencontainers.image.description="API Gateway with JWT auth, rate limiting, and request routing" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.vendor="CSE363 Cloud Project" \
+      org.opencontainers.image.authors="ammarlhassan" \
+      org.opencontainers.image.source="https://github.com/ammarlhassan/Cloud_Project" \
+      org.opencontainers.image.base.name="python:3.11-slim" \
+      org.opencontainers.image.licenses="MIT"
+
+# Install runtime dependencies for health checks and signal handling
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    tini \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Create non-root user for security
+RUN useradd -m -u 1000 -s /bin/bash appuser && \
     mkdir -p /app && \
     chown -R appuser:appuser /app
 
 WORKDIR /app
 
-# Copy installed packages from builder
+# Copy installed packages from builder stage
 COPY --from=builder /root/.local /home/appuser/.local
 
-# Copy application code
+# Copy application code with correct ownership
 COPY --chown=appuser:appuser api-gateway/src/ .
 
-# Switch to non-root user
+# Switch to non-root user (security best practice)
 USER appuser
 
-# Add local bin to PATH
-ENV PATH=/home/appuser/.local/bin:$PATH
-ENV PYTHONUNBUFFERED=1
+# =============================================================================
+# Environment Variables (no hardcoded credentials)
+# =============================================================================
+ENV PATH=/home/appuser/.local/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    # Service configuration (override via docker-compose or k8s)
+    PORT=5000 \
+    DEBUG=False \
+    LOG_LEVEL=INFO \
+    # Gunicorn configuration
+    GUNICORN_WORKERS=4 \
+    GUNICORN_TIMEOUT=120 \
+    GUNICORN_GRACEFUL_TIMEOUT=30 \
+    # Health check configuration
+    HEALTH_CHECK_PATH=/health \
+    READY_CHECK_PATH=/ready
 
-# Expose port
-EXPOSE 5000
+# Expose port (documentation only, actual binding via docker-compose/k8s)
+EXPOSE ${PORT}
 
-# Health check
+# =============================================================================
+# Health Check (for container orchestration)
+# - interval: time between health checks
+# - timeout: max time to wait for response
+# - start-period: grace period for container startup
+# - retries: consecutive failures before unhealthy
+# =============================================================================
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:5000/health', timeout=5)" || exit 1
+    CMD curl -f http://localhost:${PORT}${HEALTH_CHECK_PATH} || exit 1
 
-# Run with gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-", "app:app"]
+# =============================================================================
+# Graceful Shutdown Handling
+# - Use tini as init system to handle signals properly
+# - Gunicorn graceful-timeout for clean worker shutdown
+# - SIGTERM handling for Kubernetes/Docker Swarm
+# =============================================================================
+ENTRYPOINT ["/usr/bin/tini", "--"]
+
+# Run with gunicorn (production WSGI server)
+# - graceful-timeout: time for workers to finish requests on shutdown
+# - worker-tmp-dir: use memory for better performance
+# - preload: load app before forking workers (memory efficiency)
+CMD ["sh", "-c", "gunicorn \
+    --bind 0.0.0.0:${PORT} \
+    --workers ${GUNICORN_WORKERS} \
+    --timeout ${GUNICORN_TIMEOUT} \
+    --graceful-timeout ${GUNICORN_GRACEFUL_TIMEOUT} \
+    --worker-tmp-dir /dev/shm \
+    --access-logfile - \
+    --error-logfile - \
+    --capture-output \
+    --enable-stdio-inheritance \
+    --log-level ${LOG_LEVEL} \
+    app:app"]
+
+# =============================================================================
+# Resource Limits (set in docker-compose.yml or Kubernetes manifests)
+# Recommended limits for API Gateway:
+#   CPU: 500m - 1000m
+#   Memory: 256Mi - 512Mi
+# =============================================================================

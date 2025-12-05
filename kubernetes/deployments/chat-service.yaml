@@ -1,0 +1,101 @@
+# =============================================================================
+# Chat Service Deployment - Kubernetes
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chat-service
+  namespace: learner-lab
+  labels:
+    app: chat-service
+    app.kubernetes.io/name: chat-service
+    app.kubernetes.io/component: microservice
+    app.kubernetes.io/part-of: learner-lab
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: chat-service
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: chat-service
+    spec:
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: chat-service
+          image: ${ECR_REGISTRY}/chat-service:${CHAT_VERSION}
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5003
+              protocol: TCP
+          env:
+            - name: DB_HOST
+              value: "chat-db"
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_NAME
+              value: "chat_db"
+            - name: DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: chat-db-secrets
+                  key: username
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: chat-db-secrets
+                  key: password
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              value: "kafka:9092"
+            - name: PORT
+              value: "5003"
+            - name: LOG_LEVEL
+              value: "INFO"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5003
+            initialDelaySeconds: 40
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 5003
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 3
+          securityContext:
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            allowPrivilegeEscalation: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: chat-service
+  namespace: learner-lab
+spec:
+  type: ClusterIP
+  selector:
+    app: chat-service
+  ports:
+    - port: 5003
+      targetPort: 5003
+      protocol: TCP
