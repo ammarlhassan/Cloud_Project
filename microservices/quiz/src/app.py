@@ -18,9 +18,7 @@ import random
 import boto3
 from botocore.exceptions import ClientError
 import threading
-from langchain.prompts import PromptTemplate
-from langchain_openai import ChatOpenAI
-from langchain.chains import LLMChain
+from openai import OpenAI
 
 # Configure logging
 logging.basicConfig(
@@ -105,33 +103,29 @@ def create_s3_client():
 
 s3_client = create_s3_client()
 
-# Initialize LangChain LLM with OpenRouter
-def create_llm():
-    """Create LangChain LLM instance with OpenRouter (free model)"""
+# Initialize OpenRouter client
+def create_openrouter_client():
+    """Create OpenRouter client instance"""
     if not OPENROUTER_API_KEY:
         logger.warning("OpenRouter API key not configured")
         return None
     
     try:
-        llm = ChatOpenAI(
-            model=OPENROUTER_MODEL,
-            temperature=0.7,
-            openai_api_key=OPENROUTER_API_KEY,
-            openai_api_base="https://openrouter.ai/api/v1",
-            model_kwargs={
-                "headers": {
-                    "HTTP-Referer": "https://quiz-service.local",
-                    "X-Title": "Quiz Service"
-                }
+        client = OpenAI(
+            api_key=OPENROUTER_API_KEY,
+            base_url="https://openrouter.ai/api/v1",
+            default_headers={
+                "HTTP-Referer": "https://quiz-service.local",
+                "X-Title": "Quiz Service"
             }
         )
-        logger.info(f"LangChain LLM initialized successfully with OpenRouter model: {OPENROUTER_MODEL}")
-        return llm
+        logger.info(f"OpenRouter client initialized successfully with model: {OPENROUTER_MODEL}")
+        return client
     except Exception as e:
-        logger.error(f"Failed to initialize LLM: {e}")
+        logger.error(f"Failed to initialize OpenRouter client: {e}")
         return None
 
-llm = create_llm()
+openrouter_client = create_openrouter_client()
 
 
 def get_db_connection():
@@ -373,19 +367,17 @@ def generate_quiz_questions(document_text, num_questions=5, difficulty='medium')
     Returns:
         list: List of question dictionaries
     """
-    if not llm:
-        logger.warning("LLM not initialized, using fallback generation")
+    if not openrouter_client:
+        logger.warning("OpenRouter client not initialized, using fallback generation")
         return generate_fallback_questions(num_questions, difficulty)
     
     try:
-        # Create prompt template for question generation
-        prompt_template = PromptTemplate(
-            input_variables=["document_text", "num_questions", "difficulty"],
-            template="""
+        # Create prompt for question generation
+        prompt = f"""
 You are an expert educator creating quiz questions from educational content.
 
 Document Content:
-{document_text}
+{document_text[:4000]}
 
 Generate {num_questions} {difficulty} level quiz questions. Include a mix of:
 - Multiple choice questions (4 options each)
@@ -410,17 +402,32 @@ Return ONLY a valid JSON array with this structure:
   }}
 ]
 """
+        
+        # Call OpenRouter API with streaming
+        response = openrouter_client.chat.completions.create(
+            model=OPENROUTER_MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": "You are an expert educator. Always return valid JSON arrays."
+                },
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ],
+            temperature=0.7,
+            stream=False  # Use non-streaming for JSON parsing
         )
         
-        # Create chain
-        chain = LLMChain(llm=llm, prompt=prompt_template)
+        # Extract response content
+        result = response.choices[0].message.content
         
-        # Generate questions
-        result = chain.run(
-            document_text=document_text[:4000],  # Limit context length
-            num_questions=num_questions,
-            difficulty=difficulty
-        )
+        # Try to extract JSON from markdown code blocks if present
+        if "```json" in result:
+            result = result.split("```json")[1].split("```")[0].strip()
+        elif "```" in result:
+            result = result.split("```")[1].split("```")[0].strip()
         
         # Parse JSON response
         questions_data = json.loads(result.strip())

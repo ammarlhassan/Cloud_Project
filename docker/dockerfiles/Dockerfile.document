@@ -1,5 +1,16 @@
+# =============================================================================
 # Multi-stage Dockerfile for Document Reader Service
-# Stage 1: Build stage
+# Follows CSE363 Phase 2 Containerization Requirements (Section 6.1)
+# =============================================================================
+
+# Build Arguments for versioning and tagging
+ARG VERSION=1.0.0
+ARG BUILD_DATE
+ARG VCS_REF
+
+# =============================================================================
+# Stage 1: Build stage - Install dependencies
+# =============================================================================
 FROM python:3.11-slim as builder
 
 WORKDIR /build
@@ -7,60 +18,91 @@ WORKDIR /build
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
-    g++ \
     libpq-dev \
-    libxml2-dev \
-    libxslt1-dev \
-    zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements and install dependencies
 COPY microservices/document-reader/src/requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
 
-# Stage 2: Runtime stage
+# =============================================================================
+# Stage 2: Runtime stage - Minimal production image
+# =============================================================================
 FROM python:3.11-slim
 
-# Set metadata labels
-LABEL maintainer="Cloud Learning Platform Team"
-LABEL service="document-reader"
-LABEL version="1.0"
+# Build arguments for labels
+ARG VERSION=1.0.0
+ARG BUILD_DATE
+ARG VCS_REF
 
-# Install runtime dependencies
+# =============================================================================
+# OCI Image Labels (for vulnerability scanning and image management)
+# =============================================================================
+LABEL org.opencontainers.image.title="Document Reader Service" \
+      org.opencontainers.image.description="PDF document processing microservice using AWS Textract and S3" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.revision="${VCS_REF}" \
+      org.opencontainers.image.vendor="CSE363 Cloud Project" \
+      org.opencontainers.image.authors="ammarlhassan" \
+      org.opencontainers.image.source="https://github.com/ammarlhassan/Cloud_Project" \
+      org.opencontainers.image.base.name="python:3.11-slim" \
+      org.opencontainers.image.licenses="MIT"
+
+# Install runtime dependencies for health checks and graceful shutdown
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
-    libxml2 \
-    libxslt1.1 \
     curl \
-    && rm -rf /var/lib/apt/lists/*
+    tini \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
-# Create non-root user
-RUN useradd -m -u 1000 appuser && \
+# Create non-root user for security
+RUN useradd -m -u 1000 -s /bin/bash appuser && \
     mkdir -p /app && \
     chown -R appuser:appuser /app
 
 WORKDIR /app
 
-# Copy installed packages from builder
+# Copy installed packages from builder stage
 COPY --from=builder /root/.local /home/appuser/.local
 
-# Copy application code
+# Copy application code with correct ownership
 COPY --chown=appuser:appuser microservices/document-reader/src/ .
 
-# Switch to non-root user
+# Switch to non-root user (security best practice)
 USER appuser
 
-# Add local bin to PATH
-ENV PATH=/home/appuser/.local/bin:$PATH
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
+# =============================================================================
+# Environment Variables (no hardcoded credentials)
+# =============================================================================
+ENV PATH=/home/appuser/.local/bin:$PATH \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PORT=5004 \
+    DEBUG=False \
+    LOG_LEVEL=INFO \
+    GUNICORN_WORKERS=4 \
+    GUNICORN_TIMEOUT=120 \
+    GUNICORN_GRACEFUL_TIMEOUT=30
 
 # Expose port
-EXPOSE 5004
+EXPOSE ${PORT}
 
-# Health check
+# =============================================================================
+# Health Check (for container orchestration)
+# =============================================================================
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD python -c "import requests; requests.get('http://localhost:5004/health', timeout=5)" || exit 1
+    CMD curl -f http://localhost:${PORT}/health || exit 1
 
-# Run with gunicorn for production
-CMD ["gunicorn", "--bind", "0.0.0.0:5004", "--workers", "4", "--threads", "2", "--timeout", "120", "--graceful-timeout", "30", "--access-logfile", "-", "--error-logfile", "-", "--log-level", "info", "app:app"]
+# =============================================================================
+# Entrypoint with tini for graceful shutdown (handles SIGTERM properly)
+# =============================================================================
+ENTRYPOINT ["/usr/bin/tini", "--"]
+
+# =============================================================================
+# Run with gunicorn using environment variables for configuration
+# Note: Version tagging (--build-arg VERSION=x.x.x) and vulnerability scanning
+# must be done by the build pipeline (see scripts/ecr-setup.sh)
+# =============================================================================
+CMD ["sh", "-c", "gunicorn --bind 0.0.0.0:${PORT} --workers ${GUNICORN_WORKERS} --timeout ${GUNICORN_TIMEOUT} --graceful-timeout ${GUNICORN_GRACEFUL_TIMEOUT} --log-level ${LOG_LEVEL} --access-logfile - --error-logfile - app:app"]
