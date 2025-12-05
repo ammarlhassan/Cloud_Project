@@ -6,14 +6,17 @@ import os
 import json
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import boto3
 from botocore.exceptions import ClientError
-from kafka import KafkaProducer
+from kafka import KafkaProducer, KafkaConsumer
 from kafka.errors import KafkaError
+import psycopg2
+from psycopg2.extras import RealDictCursor
 import time
+import threading
 
 # Configure logging
 logging.basicConfig(
@@ -27,10 +30,20 @@ CORS(app)
 
 # Environment configuration
 AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
-S3_BUCKET = os.environ.get('S3_BUCKET_STT', 'learning-platform-stt')
+S3_BUCKET = os.environ.get('S3_BUCKET_STT', 'stt-service-storage-dev-199892543493')
 KAFKA_BOOTSTRAP_SERVERS = os.environ.get('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092').split(',')
 KAFKA_TOPIC_REQUEST = 'audio.transcription.requested'
 KAFKA_TOPIC_COMPLETED = 'audio.transcription.completed'
+
+# Database configuration
+DB_HOST = os.environ.get('DB_HOST', 'localhost')
+DB_PORT = os.environ.get('DB_PORT', '5432')
+DB_NAME = os.environ.get('DB_NAME', 'stt_db')
+DB_USER = os.environ.get('DB_USER', 'postgres')
+DB_PASSWORD = os.environ.get('DB_PASSWORD', 'postgres')
+
+# Audio retention configuration
+AUDIO_RETENTION_DAYS = int(os.environ.get('AUDIO_RETENTION_DAYS', '30'))
 
 # Initialize AWS clients
 try:
@@ -68,6 +81,400 @@ def create_kafka_producer():
                 return None
 
 kafka_producer = create_kafka_producer()
+
+
+def get_db_connection():
+    """Get PostgreSQL database connection"""
+    try:
+        conn = psycopg2.connect(
+            host=DB_HOST,
+            port=DB_PORT,
+            database=DB_NAME,
+            user=DB_USER,
+            password=DB_PASSWORD,
+            cursor_factory=RealDictCursor
+        )
+        return conn
+    except Exception as e:
+        logger.error(f"Database connection error: {e}")
+        return None
+
+
+def init_database():
+    """Initialize database tables"""
+    conn = get_db_connection()
+    if not conn:
+        logger.error("Failed to initialize database - no connection")
+        return False
+    
+    try:
+        cursor = conn.cursor()
+        
+        # Create transcriptions table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS transcriptions (
+                transcription_id VARCHAR(36) PRIMARY KEY,
+                user_id VARCHAR(100) NOT NULL,
+                audio_url TEXT NOT NULL,
+                transcript TEXT,
+                language_code VARCHAR(10) NOT NULL,
+                confidence_score FLOAT,
+                status VARCHAR(20) NOT NULL,
+                file_size INTEGER,
+                duration_seconds FLOAT,
+                job_name VARCHAR(200),
+                error_message TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP
+            )
+        """)
+        
+        # Create index for faster queries
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_transcriptions_user 
+            ON transcriptions(user_id, created_at DESC)
+        """)
+        
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_transcriptions_status 
+            ON transcriptions(status, created_at)
+        """)
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        logger.info("Database initialized successfully")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Database initialization error: {e}")
+        if conn:
+            conn.close()
+        return False
+
+
+# Initialize database on startup
+init_database()
+
+
+def save_transcription(transcription_data):
+    """Save transcription to database"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO transcriptions 
+            (transcription_id, user_id, audio_url, transcript, language_code, 
+             confidence_score, status, file_size, job_name, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """, (
+            transcription_data['transcription_id'],
+            transcription_data['user_id'],
+            transcription_data['audio_url'],
+            transcription_data.get('transcript', ''),
+            transcription_data['language_code'],
+            transcription_data.get('confidence_score'),
+            transcription_data['status'],
+            transcription_data.get('file_size'),
+            transcription_data.get('job_name'),
+            datetime.utcnow()
+        ))
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        logger.info(f"Transcription saved: {transcription_data['transcription_id']}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error saving transcription: {e}")
+        if conn:
+            conn.close()
+        return False
+
+
+def update_transcription(transcription_id, update_data):
+    """Update transcription record"""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    
+    try:
+        cursor = conn.cursor()
+        
+        # Build dynamic UPDATE query
+        set_clause = ', '.join([f"{key} = %s" for key in update_data.keys()])
+        set_clause += ', updated_at = %s'
+        
+        values = list(update_data.values())
+        values.append(datetime.utcnow())
+        values.append(transcription_id)
+        
+        cursor.execute(f"""
+            UPDATE transcriptions 
+            SET {set_clause}
+            WHERE transcription_id = %s
+        """, values)
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        logger.info(f"Transcription updated: {transcription_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error updating transcription: {e}")
+        if conn:
+            conn.close()
+        return False
+
+
+def get_transcription_by_id(transcription_id):
+    """Get transcription by ID"""
+    conn = get_db_connection()
+    if not conn:
+        return None
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM transcriptions 
+            WHERE transcription_id = %s
+        """, (transcription_id,))
+        
+        result = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error fetching transcription: {e}")
+        if conn:
+            conn.close()
+        return None
+
+
+def get_user_transcriptions(user_id, limit=50, offset=0):
+    """Get user's transcription history"""
+    conn = get_db_connection()
+    if not conn:
+        return []
+    
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT transcription_id, audio_url, transcript, language_code, 
+                   status, file_size, created_at, completed_at
+            FROM transcriptions 
+            WHERE user_id = %s
+            ORDER BY created_at DESC
+            LIMIT %s OFFSET %s
+        """, (user_id, limit, offset))
+        
+        results = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        return results
+        
+    except Exception as e:
+        logger.error(f"Error fetching user transcriptions: {e}")
+        if conn:
+            conn.close()
+        return []
+
+
+def delete_old_audio_files():
+    """Delete audio files older than retention period"""
+    if not s3_client:
+        return
+    
+    try:
+        cutoff_date = datetime.utcnow() - timedelta(days=AUDIO_RETENTION_DAYS)
+        
+        # List objects in audio folder
+        response = s3_client.list_objects_v2(
+            Bucket=S3_BUCKET,
+            Prefix='audio/'
+        )
+        
+        if 'Contents' not in response:
+            return
+        
+        deleted_count = 0
+        for obj in response['Contents']:
+            if obj['LastModified'].replace(tzinfo=None) < cutoff_date:
+                s3_client.delete_object(
+                    Bucket=S3_BUCKET,
+                    Key=obj['Key']
+                )
+                deleted_count += 1
+        
+        if deleted_count > 0:
+            logger.info(f"Deleted {deleted_count} old audio files")
+        
+    except Exception as e:
+        logger.error(f"Error deleting old audio files: {e}")
+
+
+def kafka_consumer_worker():
+    """
+    Kafka consumer worker to process audio.transcription.requested events
+    Runs in a separate thread
+    """
+    logger.info("Starting Kafka consumer worker...")
+    
+    max_retries = 5
+    retry_delay = 5
+    
+    for attempt in range(max_retries):
+        try:
+            consumer = KafkaConsumer(
+                KAFKA_TOPIC_REQUEST,
+                bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
+                value_deserializer=lambda m: json.loads(m.decode('utf-8')),
+                group_id='stt-service-group',
+                auto_offset_reset='latest',
+                enable_auto_commit=True
+            )
+            
+            logger.info(f"Kafka consumer connected, listening to {KAFKA_TOPIC_REQUEST}")
+            
+            for message in consumer:
+                try:
+                    event = message.value
+                    logger.info(f"Received transcription request: {event}")
+                    
+                    task_id = event.get('task_id')
+                    user_id = event.get('user_id')
+                    audio_url = event.get('audio_url')
+                    language_code = event.get('language', 'en-US')
+                    
+                    if not all([task_id, user_id, audio_url]):
+                        logger.error(f"Invalid event data: {event}")
+                        continue
+                    
+                    # Save initial transcription record
+                    transcription_record = {
+                        'transcription_id': task_id,
+                        'user_id': user_id,
+                        'audio_url': audio_url,
+                        'language_code': language_code,
+                        'status': 'processing',
+                        'file_size': event.get('file_size'),
+                        'job_name': f"transcribe-{task_id}"
+                    }
+                    save_transcription(transcription_record)
+                    
+                    # Start transcription job
+                    job_name = f"transcribe-{task_id}"
+                    job = start_transcription_job(job_name, audio_url, language_code)
+                    
+                    if not job:
+                        update_transcription(task_id, {
+                            'status': 'failed',
+                            'error_message': 'Failed to start transcription job'
+                        })
+                        
+                        failure_event = {
+                            'task_id': task_id,
+                            'user_id': user_id,
+                            'status': 'failed',
+                            'error': 'Failed to start transcription',
+                            'timestamp': datetime.utcnow().isoformat()
+                        }
+                        publish_to_kafka(KAFKA_TOPIC_COMPLETED, failure_event)
+                        continue
+                    
+                    # Get transcription result (this polls until complete)
+                    result = get_transcription_result(job_name)
+                    
+                    if result and result.get('status') == 'completed':
+                        # Update database with results
+                        update_transcription(task_id, {
+                            'transcript': result['transcript'],
+                            'status': 'completed',
+                            'completed_at': datetime.utcnow()
+                        })
+                        
+                        # Publish completion event
+                        completion_event = {
+                            'task_id': task_id,
+                            'user_id': user_id,
+                            'audio_url': audio_url,
+                            'transcript': result['transcript'],
+                            'language': language_code,
+                            'status': 'completed',
+                            'timestamp': datetime.utcnow().isoformat()
+                        }
+                        publish_to_kafka(KAFKA_TOPIC_COMPLETED, completion_event)
+                        logger.info(f"Transcription completed for task: {task_id}")
+                    else:
+                        error_msg = result.get('error', 'Unknown error') if result else 'No result'
+                        
+                        update_transcription(task_id, {
+                            'status': 'failed',
+                            'error_message': error_msg
+                        })
+                        
+                        failure_event = {
+                            'task_id': task_id,
+                            'user_id': user_id,
+                            'status': 'failed',
+                            'error': error_msg,
+                            'timestamp': datetime.utcnow().isoformat()
+                        }
+                        publish_to_kafka(KAFKA_TOPIC_COMPLETED, failure_event)
+                        logger.error(f"Transcription failed for task {task_id}: {error_msg}")
+                
+                except Exception as e:
+                    logger.error(f"Error processing Kafka message: {e}")
+                    continue
+            
+        except KafkaError as e:
+            logger.warning(f"Kafka consumer error (attempt {attempt + 1}): {e}")
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay)
+            else:
+                logger.error("Kafka consumer failed after all retries")
+                return
+        except Exception as e:
+            logger.error(f"Unexpected error in Kafka consumer: {e}")
+            time.sleep(retry_delay)
+
+
+def audio_cleanup_worker():
+    """
+    Background worker to periodically clean up old audio files
+    Runs every 24 hours
+    """
+    logger.info("Starting audio cleanup worker...")
+    
+    while True:
+        try:
+            logger.info("Running audio file cleanup...")
+            delete_old_audio_files()
+            
+            # Sleep for 24 hours
+            time.sleep(24 * 60 * 60)
+            
+        except Exception as e:
+            logger.error(f"Error in audio cleanup worker: {e}")
+            time.sleep(60 * 60)  # Retry after 1 hour on error
+
+
+# Start background workers
+consumer_thread = threading.Thread(target=kafka_consumer_worker, daemon=True)
+consumer_thread.start()
+
+cleanup_thread = threading.Thread(target=audio_cleanup_worker, daemon=True)
+cleanup_thread.start()
 
 
 def ensure_s3_bucket():
@@ -184,7 +591,7 @@ def get_transcription_result(job_name):
     
     try:
         # Poll for job completion
-        max_attempts = 60
+        max_attempts = 30
         attempt = 0
         
         while attempt < max_attempts:
@@ -262,6 +669,8 @@ def publish_to_kafka(topic, message):
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
+    db_healthy = get_db_connection() is not None
+    
     health_status = {
         'service': 'stt',
         'status': 'healthy',
@@ -269,7 +678,8 @@ def health_check():
         'components': {
             'transcribe': transcribe_client is not None,
             's3': s3_client is not None,
-            'kafka': kafka_producer is not None
+            'kafka': kafka_producer is not None,
+            'database': db_healthy
         }
     }
     
@@ -283,7 +693,7 @@ def readiness_check():
     return jsonify({'status': 'ready'}), 200
 
 
-@app.route('/api/v1/stt/transcribe', methods=['POST'])
+@app.route('/api/stt/transcribe', methods=['POST'])
 def transcribe_audio():
     """
     Transcribe audio file
@@ -348,11 +758,28 @@ def transcribe_audio():
             
             return jsonify({'error': 'Failed to upload audio'}), 500
         
+        # Save initial transcription record to database
+        transcription_record = {
+            'transcription_id': task_id,
+            'user_id': user_id,
+            'audio_url': s3_url,
+            'language_code': language_code,
+            'status': 'processing',
+            'file_size': len(audio_data),
+            'job_name': f"transcribe-{task_id}"
+        }
+        save_transcription(transcription_record)
+        
         # Start transcription job
         job_name = f"transcribe-{task_id}"
         job = start_transcription_job(job_name, s3_url, language_code)
         
         if not job:
+            update_transcription(task_id, {
+                'status': 'failed',
+                'error_message': 'Failed to start transcription'
+            })
+            
             failure_event = {
                 'task_id': task_id,
                 'user_id': user_id,
@@ -368,16 +795,30 @@ def transcribe_audio():
         result = get_transcription_result(job_name)
         
         if not result or result.get('status') != 'completed':
+            error_msg = result.get('error', 'Transcription failed') if result else 'Unknown error'
+            
+            update_transcription(task_id, {
+                'status': 'failed',
+                'error_message': error_msg
+            })
+            
             failure_event = {
                 'task_id': task_id,
                 'user_id': user_id,
                 'status': 'failed',
-                'error': result.get('error', 'Transcription failed'),
+                'error': error_msg,
                 'timestamp': datetime.utcnow().isoformat()
             }
             publish_to_kafka(KAFKA_TOPIC_COMPLETED, failure_event)
             
-            return jsonify({'error': result.get('error', 'Transcription failed')}), 500
+            return jsonify({'error': error_msg}), 500
+        
+        # Update transcription record with results
+        update_transcription(task_id, {
+            'transcript': result['transcript'],
+            'status': 'completed',
+            'completed_at': datetime.utcnow()
+        })
         
         # Publish completion event to Kafka
         completion_event = {
@@ -406,34 +847,101 @@ def transcribe_audio():
         return jsonify({'error': 'Internal server error'}), 500
 
 
-@app.route('/api/v1/stt/status/<task_id>', methods=['GET'])
-def get_transcription_status(task_id):
-    """Get transcription job status"""
+
+@app.route('/api/stt/transcription/<transcription_id>', methods=['GET'])
+def get_transcription(transcription_id):
+    """
+    Get transcription result by ID
+    
+    Query params:
+    - user_id: User ID (required for authorization)
+    """
     try:
-        if not transcribe_client:
-            return jsonify({'error': 'Transcribe client not available'}), 503
+        user_id = request.args.get('user_id')
+        if not user_id:
+            return jsonify({'error': 'Missing required parameter: user_id'}), 400
         
-        job_name = f"transcribe-{task_id}"
-        response = transcribe_client.get_transcription_job(
-            TranscriptionJobName=job_name
-        )
+        # Fetch transcription from database
+        transcription = get_transcription_by_id(transcription_id)
         
-        job = response.get('TranscriptionJob', {})
-        status = job.get('TranscriptionJobStatus')
+        if not transcription:
+            return jsonify({'error': 'Transcription not found'}), 404
         
-        return jsonify({
-            'task_id': task_id,
-            'status': status.lower(),
-            'creation_time': job.get('CreationTime').isoformat() if job.get('CreationTime') else None
-        }), 200
+        # Verify user owns this transcription
+        if transcription['user_id'] != user_id:
+            return jsonify({'error': 'Unauthorized'}), 403
         
-    except ClientError as e:
-        if e.response['Error']['Code'] == 'BadRequestException':
-            return jsonify({'error': 'Job not found'}), 404
-        logger.error(f"Error getting job status: {e}")
-        return jsonify({'error': 'Failed to get status'}), 500
+        # Format response
+        response_data = {
+            'transcription_id': transcription['transcription_id'],
+            'transcript': transcription['transcript'],
+            'audio_url': transcription['audio_url'],
+            'language_code': transcription['language_code'],
+            'status': transcription['status'],
+            'file_size': transcription['file_size'],
+            'created_at': transcription['created_at'].isoformat() if transcription['created_at'] else None,
+            'completed_at': transcription['completed_at'].isoformat() if transcription.get('completed_at') else None,
+            'error_message': transcription.get('error_message')
+        }
+        
+        return jsonify(response_data), 200
+        
     except Exception as e:
-        logger.error(f"Unexpected error: {e}")
+        logger.error(f"Error fetching transcription: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+
+@app.route('/api/stt/transcriptions', methods=['GET'])
+def list_user_transcriptions():
+    """
+    List user's transcription history
+    
+    Query params:
+    - user_id: User ID (required)
+    - limit: Max results (default: 50)
+    - offset: Pagination offset (default: 0)
+    """
+    try:
+        user_id = request.args.get('user_id')
+        if not user_id:
+            return jsonify({'error': 'Missing required parameter: user_id'}), 400
+        
+        limit = int(request.args.get('limit', 50))
+        offset = int(request.args.get('offset', 0))
+        
+        # Validate limits
+        if limit > 100:
+            limit = 100
+        if limit < 1:
+            limit = 1
+        
+        # Fetch transcriptions from database
+        transcriptions = get_user_transcriptions(user_id, limit, offset)
+        
+        # Format response
+        response_data = {
+            'user_id': user_id,
+            'count': len(transcriptions),
+            'limit': limit,
+            'offset': offset,
+            'transcriptions': [
+                {
+                    'transcription_id': t['transcription_id'],
+                    'transcript': t['transcript'][:200] + '...' if t['transcript'] and len(t['transcript']) > 200 else t['transcript'],
+                    'language_code': t['language_code'],
+                    'status': t['status'],
+                    'file_size': t['file_size'],
+                    'created_at': t['created_at'].isoformat() if t['created_at'] else None,
+                    'completed_at': t['completed_at'].isoformat() if t.get('completed_at') else None
+                }
+                for t in transcriptions
+            ]
+        }
+        
+        return jsonify(response_data), 200
+        
+    except Exception as e:
+        logger.error(f"Error listing transcriptions: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 
