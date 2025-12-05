@@ -33,11 +33,11 @@ app = Flask(__name__)
 CORS(app)
 
 # Environment configuration
-DB_HOST = os.environ.get('DB_HOST', 'localhost')
+DB_HOST = os.environ.get('DB_HOST', 'cloud-project-db.czuu68se8miq.us-east-1.rds.amazonaws.com')
 DB_PORT = os.environ.get('DB_PORT', '5432')
-DB_NAME = os.environ.get('DB_NAME', 'quiz_db')
+DB_NAME = os.environ.get('DB_NAME', 'quiz_service')
 DB_USER = os.environ.get('DB_USER', 'postgres')
-DB_PASSWORD = os.environ.get('DB_PASSWORD', 'postgres')
+DB_PASSWORD = os.environ.get('DB_PASSWORD', 'MySecurePassword123!')
 KAFKA_BOOTSTRAP_SERVERS = os.environ.get('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092').split(',')
 KAFKA_TOPIC_REQUEST = 'quiz.requested'
 KAFKA_TOPIC_GENERATED = 'quiz.generated'
@@ -45,14 +45,14 @@ KAFKA_TOPIC_NOTES_GENERATED = 'notes.generated'
 
 # S3 Configuration
 AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
-S3_BUCKET_NAME = os.environ.get('S3_BUCKET_NAME', 'quiz-service-storage-dev')
+S3_BUCKET_NAME = os.environ.get('S3_BUCKET_NAME', 'quiz-service-storage-dev-199892543493')
 AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID', '')
 AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
 
 # OpenRouter Configuration
 OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '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')
 OPENROUTER_MODEL = os.environ.get('OPENROUTER_MODEL', 'amazon/nova-2-lite-v1:free')
-JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'change-in-production')
+JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'your-secret-key-change-in-production')
 JWT_ALGORITHM = os.environ.get('JWT_ALGORITHM', 'HS256')
 
 # Initialize Kafka producer

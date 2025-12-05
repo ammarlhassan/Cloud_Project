@@ -54,7 +54,7 @@ REDIS_PORT = int(os.environ.get('REDIS_PORT', '6379'))
 REDIS_DB = int(os.environ.get('REDIS_DB', '0'))
 
 OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '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')
-JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'change-in-production')
+JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'your-secret-key-change-in-production')
 JWT_ALGORITHM = os.environ.get('JWT_ALGORITHM', 'HS256')
 
 # Global variables
