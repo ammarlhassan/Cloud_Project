@@ -1,0 +1,52 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: ACCOUNT_ID_YA_SHBAB.dkr.ecr.us-east-1.amazonaws.com
+  DOCKER_BUILDKIT: 1
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [tts, stt, chat, document, quiz, gateway]
+    steps:
+      # Step 1: Checkout code
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      # Step 2: Configure AWS credentials
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # Step 3: Login to Amazon ECR
+      - name: Login to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v1
+
+      # Step 4: Build Docker image
+      - name: Build Docker image
+        run: |
+          SERVICE=${{ matrix.service }}
+          VERSION=1.0.0
+          docker build \
+            -f docker/dockerfiles/Dockerfile.${SERVICE} \
+            -t $ECR_REGISTRY/${SERVICE}-service:${VERSION} .
+
+      # Step 5: Push Docker image to ECR
+      - name: Push Docker image
+        run: |
+          SERVICE=${{ matrix.service }}
+          VERSION=1.0.0
+          docker push $ECR_REGISTRY/${SERVICE}-service:${VERSION}
