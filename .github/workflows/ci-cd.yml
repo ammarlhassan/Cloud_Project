@@ -44,10 +44,10 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}  # <--- CRITICAL FOR LEARNER LABS
-          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ASIAU3XESGDANBIQRC7M
+          aws-secret-access-key: 1WY4vQjJuFP+70zxjqJBvutv9sJjiJ/HhesXXW4q    # (REQUIRED) Your AWS secret key
+          aws-session-token: IQoJb3JpZ2luX2VjEFsaCXVzLXdlc3QtMiJIMEYCIQDQU107CEtMv6s+4Ut13voVZaohyHJ98vxuW/pr6AekdwIhAPQL1mRufudXY9/EqURBveLhqmFfPKxsnIkuAL1H76GKKrYCCCQQABoMMzM0NDEzMDUwMDQ4Igw5JgCD2zcDOtxV7jYqkwKCX+aVfiRIOvn/UfNRrVGp/iZyP7xp/YZmBkgGFZ+j7B507eePcoebesgG22rdzzcOvh/pxtVkg99C5zCigxeTueKPcJf0Ut3OLVKUOf5/cp0YlROF/Qk1HaN/VX0F8t5h2+XjvR4lzaGjMiI3C6x7v0LYMJoa96len13rVvZoaoQUj7Z2YLJFf/v3hdPsKZfq8aH7PPz9ujh7QERuO4V5q/2k/LWt4X5jd0mTB0BUzAOv0mWI30rhY3wpMVNDEfk1VgOHVxl2xgv3s4FtJ7g09Ah60nnVZDIAw1CXELojNkOLgHgjfuKDPf7PPn7au6TrbIp6tjx79G4ZuNwOo8OVIHAHchLK8KJCf3qRmg8/RypAiDCB5fbJBjqcAQl+GyuIasfoqjyB/TYIXRqFVz9zOmvp7ZZ7UUnbujaIQybZOjyqhANS/EZ9UdGxgeB1tL12Fcs7moqgrFeXz8tFcJKpQltXoL8udmfxH07rGbIOTPInweVo2nzIR1S5eKtTugBQ+GCn5Nlg7LdE+UYMcMrgqvSIxrPT3Sicfd8WMAX0UyNb90h8RHra7D5n/35mOd3/eTDJyyv9FQ==
+          aws-region: us-east-1  
 
       # Step 3: Login to Amazon ECR
       - name: Login to ECR
