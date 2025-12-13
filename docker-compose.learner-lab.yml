@@ -45,7 +45,7 @@ services:
     networks:
       - learner-lab-network
     environment:
-      DB_HOST: ${CHAT_DB_HOST:-cloud-project-db.czuu68se8miq.us-east-1.rds.amazonaws.com}
+      DB_HOST: ${CHAT_DB_HOST:-cloud-project-db.cjyjymrymgig.us-east-1.rds.amazonaws.com}
       DB_PORT: 5432
       DB_NAME: chat_db
       DB_USER: ${CHAT_DB_USER:-postgres}
@@ -66,7 +66,7 @@ services:
     networks:
       - learner-lab-network
     environment:
-      DB_HOST: ${DOCUMENT_DB_HOST:-cloud-project-db.czuu68se8miq.us-east-1.rds.amazonaws.com}
+      DB_HOST: ${DOCUMENT_DB_HOST:-cloud-project-db.cjyjymrymgig.us-east-1.rds.amazonaws.com}
       DB_PORT: 5432
       DB_NAME: document_db
       DB_USER: ${DOCUMENT_DB_USER:-postgres}
@@ -87,7 +87,7 @@ services:
     networks:
       - learner-lab-network
     environment:
-      DB_HOST: ${QUIZ_DB_HOST:-cloud-project-db.czuu68se8miq.us-east-1.rds.amazonaws.com}
+      DB_HOST: ${QUIZ_DB_HOST:-cloud-project-db.cjyjymrymgig.us-east-1.rds.amazonaws.com}
       DB_PORT: 5432
       DB_NAME: chat_service
       DB_USER: ${QUIZ_DB_USER:-postgres}
