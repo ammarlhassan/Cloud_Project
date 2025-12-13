@@ -30,13 +30,13 @@ CORS(app)
 
 # Environment configuration
 AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
-S3_BUCKET = os.environ.get('S3_BUCKET_STT', 'stt-service-storage-dev-199892543493')
+S3_BUCKET = os.environ.get('S3_BUCKET_STT', 'stt-service-storage-dev-334413050048')
 KAFKA_BOOTSTRAP_SERVERS = os.environ.get('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092').split(',')
 KAFKA_TOPIC_REQUEST = 'audio.transcription.requested'
 KAFKA_TOPIC_COMPLETED = 'audio.transcription.completed'
 
 # Database configuration
-DB_HOST = os.environ.get('DB_HOST', 'cloud-project-db.czuu68se8miq.us-east-1.rds.amazonaws.com')
+DB_HOST = os.environ.get('DB_HOST', 'cloud-project-db.cjyjymrymgig.us-east-1.rds.amazonaws.com')
 DB_PORT = os.environ.get('DB_PORT', '5432')
 DB_NAME = os.environ.get('DB_NAME', 'stt_service')
 DB_USER = os.environ.get('DB_USER', 'postgres')

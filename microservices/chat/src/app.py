@@ -35,7 +35,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Environment configuration
-DB_HOST = os.environ.get('DB_HOST', 'cloud-project-db.czuu68se8miq.us-east-1.rds.amazonaws.com')
+DB_HOST = os.environ.get('DB_HOST', 'cloud-project-db.cjyjymrymgig.us-east-1.rds.amazonaws.com')
 DB_PORT = os.environ.get('DB_PORT', '5432')
 DB_NAME = os.environ.get('DB_NAME', 'chat_service')
 DB_USER = os.environ.get('DB_USER', 'postgres')
@@ -47,7 +47,7 @@ KAFKA_CONSUME_TOPIC = 'document.processed'
 KAFKA_CONSUMER_GROUP = 'chat-service-group'
 
 AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
-S3_BUCKET_NAME = os.environ.get('S3_BUCKET_NAME', 'chat-service-storage-dev-199892543493')
+S3_BUCKET_NAME = os.environ.get('S3_BUCKET_NAME', 'chat-service-storage-dev-334413050048')
 
 REDIS_HOST = os.environ.get('REDIS_HOST', 'localhost')
 REDIS_PORT = int(os.environ.get('REDIS_PORT', '6379'))

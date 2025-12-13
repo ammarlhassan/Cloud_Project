@@ -35,8 +35,8 @@ CORS(app)
 
 # Environment configuration
 AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
-S3_BUCKET = os.environ.get('S3_BUCKET_DOCUMENTS', 'document-reader-storage-dev-199892543493')
-DB_HOST = os.environ.get('DB_HOST', 'cloud-project-db.czuu68se8miq.us-east-1.rds.amazonaws.com')
+S3_BUCKET = os.environ.get('S3_BUCKET_DOCUMENTS', 'document-reader-storage-dev-334413050048')
+DB_HOST = os.environ.get('DB_HOST', 'cloud-project-db.cjyjymrymgig.us-east-1.rds.amazonaws.com')
 DB_PORT = os.environ.get('DB_PORT', '5432')
 DB_NAME = os.environ.get('DB_NAME', 'document_reader')
 DB_USER = os.environ.get('DB_USER', 'postgres')
