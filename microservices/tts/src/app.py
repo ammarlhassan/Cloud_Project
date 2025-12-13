@@ -673,7 +673,7 @@ def get_audio(task_id):
 @app.route('/api/tts/audio/<task_id>', methods=['DELETE'])
 def delete_audio(task_id):
     """
-    Delete generated audio file
+    Delete generated audio file with S3 fallback
     
     Path parameters:
         task_id: The task ID returned from synthesize endpoint
@@ -694,24 +694,54 @@ def delete_audio(task_id):
         if not user_id:
             return jsonify({'error': 'Missing required field: user_id'}), 400
         
-        # Get metadata from cache
+        # Try to get metadata from cache first
         metadata = get_audio_metadata(task_id)
         
-        if not metadata:
-            return jsonify({'error': 'Audio not found or already deleted'}), 404
-        
-        # Verify user ownership
-        if metadata.get('user_id') != user_id:
-            return jsonify({'error': 'Unauthorized access'}), 403
+        if metadata:
+            # Happy path: metadata exists in Redis
+            if metadata.get('user_id') != user_id:
+                return jsonify({'error': 'Unauthorized access'}), 403
+            
+            file_key = metadata.get('file_key')
+            
+        else:
+            # Fallback: Try to find file in S3 directly
+            logger.warning(f"Metadata not found for {task_id}, attempting S3 fallback for deletion")
+            
+            # Try all possible formats
+            file_key = None
+            
+            for fmt in AUDIO_FORMATS.keys():
+                potential_key = f"audio/{user_id}/{task_id}.{fmt}"
+                
+                # Check if file exists in S3
+                try:
+                    s3_client.head_object(Bucket=S3_BUCKET, Key=potential_key)
+                    file_key = potential_key
+                    logger.info(f"Found audio in S3 via fallback for deletion: {file_key}")
+                    break
+                except ClientError:
+                    continue
+            
+            if not file_key:
+                # Truly not found anywhere
+                return jsonify({'error': 'Audio not found or already deleted'}), 404
         
         # Delete from S3
-        file_key = metadata.get('file_key')
         s3_deleted = delete_audio_from_s3(file_key)
         
-        # Delete metadata from cache
+        # Delete metadata from cache (if it exists)
         cache_deleted = delete_audio_metadata(task_id, user_id)
         
         if s3_deleted or cache_deleted:
+            deletion_event = {
+                'task_id': task_id,
+                'user_id': user_id,
+                'file_key': file_key,
+                'action': 'deleted',
+                'timestamp': datetime.utcnow().isoformat()
+            }
+            publish_to_kafka('audio.generation.deleted', deletion_event)
             logger.info(f"Deleted audio: {task_id} for user: {user_id}")
             return jsonify({
                 'message': 'Audio deleted successfully',
