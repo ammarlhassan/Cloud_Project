@@ -7,7 +7,7 @@ import json
 import logging
 import uuid
 from datetime import datetime
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import boto3
 from botocore.exceptions import ClientError
@@ -608,13 +608,7 @@ def list_voices():
 @app.route('/api/tts/audio/<task_id>', methods=['GET'])
 def get_audio(task_id):
     """
-    Retrieve generated audio file
-    
-    Path parameters:
-        task_id: The task ID returned from synthesize endpoint
-    
-    Query parameters:
-        user_id: User identifier (for authorization)
+    Retrieve generated audio file with S3 fallback
     """
     try:
         user_id = request.args.get('user_id')
@@ -622,30 +616,53 @@ def get_audio(task_id):
         if not user_id:
             return jsonify({'error': 'Missing required parameter: user_id'}), 400
         
-        # Get metadata from cache
+        # Try to get metadata from cache first
         metadata = get_audio_metadata(task_id)
         
-        if not metadata:
-            return jsonify({'error': 'Audio not found or expired'}), 404
-        
-        # Verify user ownership
-        if metadata.get('user_id') != user_id:
-            return jsonify({'error': 'Unauthorized access'}), 403
+        if metadata:
+            # Happy path: metadata exists in Redis
+            if metadata.get('user_id') != user_id:
+                return jsonify({'error': 'Unauthorized access'}), 403
+            
+            file_key = metadata.get('file_key')
+            audio_format = metadata.get('format', 'mp3')
+            
+        else:
+            # Fallback: Try to find file in S3 directly
+            logger.warning(f"Metadata not found for {task_id}, attempting S3 fallback")
+            
+            # Try all possible formats
+            file_key = None
+            audio_format = None
+            
+            for fmt in AUDIO_FORMATS.keys():
+                potential_key = f"audio/{user_id}/{task_id}.{fmt}"
+                
+                # Check if file exists in S3
+                try:
+                    s3_client.head_object(Bucket=S3_BUCKET, Key=potential_key)
+                    file_key = potential_key
+                    audio_format = fmt
+                    logger.info(f"Found audio in S3 via fallback: {file_key}")
+                    break
+                except ClientError:
+                    continue
+            
+            if not file_key:
+                return jsonify({'error': 'Audio not found or expired'}), 404
         
         # Retrieve audio from S3
-        file_key = metadata.get('file_key')
         audio_data, content_type = get_audio_from_s3(file_key)
         
         if not audio_data:
             return jsonify({'error': 'Audio file not found in storage'}), 404
         
         # Return audio file
-        from flask import send_file
         return send_file(
             BytesIO(audio_data),
             mimetype=content_type,
             as_attachment=True,
-            download_name=f"{task_id}.{metadata.get('format', 'mp3')}"
+            download_name=f"{task_id}.{audio_format}"
         )
         
     except Exception as e:
