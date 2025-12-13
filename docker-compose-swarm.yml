@@ -1,0 +1,192 @@
+version: "3.9"
+
+services:
+  tts-service:
+    image: ${ECR_REGISTRY:-localhost}/tts-service:${TTS_VERSION:-1.0.0}
+    ports:
+      - "5001:5001"
+    networks:
+      - learner-lab-network
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "10.0.30.111:9092,10.0.30.53:9092,10.0.31.72:9092"
+      ZOOKEEPER_HOSTS: "10.0.31.247:2181,10.0.30.226:2181,10.0.30.186:2181"
+      PORT: 5001
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "512M"
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+      health_check:
+        test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+        interval: 30s
+        timeout: 10s
+        retries: 3
+        start_period: 40s
+
+  stt-service:
+    image: ${ECR_REGISTRY:-localhost}/stt-service:${STT_VERSION:-1.0.0}
+    ports:
+      - "5002:5002"
+    networks:
+      - learner-lab-network
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: "10.0.30.111:9092,10.0.30.53:9092,10.0.31.72:9092"
+      ZOOKEEPER_HOSTS: "10.0.31.247:2181,10.0.30.226:2181,10.0.30.186:2181"
+      PORT: 5002
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "512M"
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+      health_check:
+        test: ["CMD", "curl", "-f", "http://localhost:5002/health"]
+        interval: 30s
+        timeout: 10s
+        retries: 3
+        start_period: 40s
+
+  chat-service:
+    image: ${ECR_REGISTRY:-localhost}/chat-service:${CHAT_VERSION:-1.0.0}
+    ports:
+      - "5003:5003"
+    networks:
+      - learner-lab-network
+    environment:
+      DB_HOST: cloud-project-db.czuu68se8miq.us-east-1.rds.amazonaws.com
+      DB_PORT: 5432
+      DB_NAME: chat_service
+      DB_USER: ${CHAT_DB_USER:?CHAT_DB_USER is required}
+      DB_PASSWORD: ${CHAT_DB_PASSWORD:?CHAT_DB_PASSWORD is required}
+      KAFKA_BOOTSTRAP_SERVERS: "10.0.30.111:9092,10.0.30.53:9092,10.0.31.72:9092"
+      ZOOKEEPER_HOSTS: "10.0.31.247:2181,10.0.30.226:2181,10.0.30.186:2181"
+      PORT: 5003
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "512M"
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+      health_check:
+        test: ["CMD", "curl", "-f", "http://localhost:5003/health"]
+        interval: 30s
+        timeout: 10s
+        retries: 3
+        start_period: 40s
+
+  document-service:
+    image: ${ECR_REGISTRY:-localhost}/document-service:${DOCUMENT_VERSION:-1.0.0}
+    ports:
+      - "5004:5004"
+    networks:
+      - learner-lab-network
+    environment:
+      DB_HOST: cloud-project-db.czuu68se8miq.us-east-1.rds.amazonaws.com
+      DB_PORT: 5432
+      DB_NAME: document_db
+      DB_USER: ${DOCUMENT_DB_USER:?DOCUMENT_DB_USER is required}
+      DB_PASSWORD: ${DOCUMENT_DB_PASSWORD:?DOCUMENT_DB_PASSWORD is required}
+      KAFKA_BOOTSTRAP_SERVERS: "10.0.30.111:9092,10.0.30.53:9092,10.0.31.72:9092"
+      ZOOKEEPER_HOSTS: "10.0.31.247:2181,10.0.30.226:2181,10.0.30.186:2181"
+      PORT: 5004
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "512M"
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+      health_check:
+        test: ["CMD", "curl", "-f", "http://localhost:5004/health"]
+        interval: 30s
+        timeout: 10s
+        retries: 3
+        start_period: 40s
+
+  quiz-service:
+    image: ${ECR_REGISTRY:-localhost}/quiz-service:${QUIZ_VERSION:-1.0.0}
+    ports:
+      - "5005:5005"
+    networks:
+      - learner-lab-network
+    environment:
+      DB_HOST: cloud-project-db.czuu68se8miq.us-east-1.rds.amazonaws.com
+      DB_PORT: 5432
+      DB_NAME: quiz_db
+      DB_USER: ${QUIZ_DB_USER:?QUIZ_DB_USER is required}
+      DB_PASSWORD: ${QUIZ_DB_PASSWORD:?QUIZ_DB_PASSWORD is required}
+      KAFKA_BOOTSTRAP_SERVERS: "10.0.30.111:9092,10.0.30.53:9092,10.0.31.72:9092"
+      ZOOKEEPER_HOSTS: "10.0.31.247:2181,10.0.30.226:2181,10.0.30.186:2181"
+      PORT: 5005
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "512M"
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+      health_check:
+        test: ["CMD", "curl", "-f", "http://localhost:5005/health"]
+        interval: 30s
+        timeout: 10s
+        retries: 3
+        start_period: 40s
+
+  api-gateway:
+    image: ${ECR_REGISTRY:-localhost}/api-gateway:${GATEWAY_VERSION:-1.0.0}
+    ports:
+      - "5000:5000"
+    networks:
+      - learner-lab-network
+    environment:
+      TTS_SERVICE_URL: http://tts-service:5001
+      STT_SERVICE_URL: http://stt-service:5002
+      CHAT_SERVICE_URL: http://chat-service:5003
+      DOCUMENT_SERVICE_URL: http://document-service:5004
+      QUIZ_SERVICE_URL: http://quiz-service:5005
+      PORT: 5000
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: "512M"
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+      health_check:
+        test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+        interval: 30s
+        timeout: 10s
+        retries: 3
+        start_period: 40s
+
+networks:
+  learner-lab-network:
+    external: true

@@ -1,43 +1,27 @@
-# Multi-stage Dockerfile for API Gateway
-# Follows CSE363 Phase 2 Containerization Requirements (Section 6.1)
-
-# =============================================================================
-# Build Arguments for versioning and tagging
-# =============================================================================
 ARG VERSION=1.0.0
 ARG BUILD_DATE
 ARG VCS_REF
 
-# =============================================================================
-# Stage 1: Build stage - Install dependencies
-# =============================================================================
+#1 buillder
 FROM python:3.11-slim as builder
 
 WORKDIR /build
 
-# Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install dependencies
 COPY api-gateway/src/requirements.txt .
 RUN pip install --no-cache-dir --user -r requirements.txt
 
-# =============================================================================
-# Stage 2: Runtime stage - Minimal production image
-# =============================================================================
+#2 runtime
 FROM python:3.11-slim
 
-# Build arguments for labels
 ARG VERSION=1.0.0
 ARG BUILD_DATE
 ARG VCS_REF
 
-# =============================================================================
-# OCI Image Labels (for vulnerability scanning and image management)
-# =============================================================================
 LABEL org.opencontainers.image.title="API Gateway Service" \
       org.opencontainers.image.description="API Gateway with JWT auth, rate limiting, and request routing" \
       org.opencontainers.image.version="${VERSION}" \
@@ -49,72 +33,41 @@ LABEL org.opencontainers.image.title="API Gateway Service" \
       org.opencontainers.image.base.name="python:3.11-slim" \
       org.opencontainers.image.licenses="MIT"
 
-# Install runtime dependencies for health checks and signal handling
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     tini \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
-# Create non-root user for security
 RUN useradd -m -u 1000 -s /bin/bash appuser && \
     mkdir -p /app && \
     chown -R appuser:appuser /app
 
 WORKDIR /app
 
-# Copy installed packages from builder stage
 COPY --from=builder /root/.local /home/appuser/.local
-
-# Copy application code with correct ownership
 COPY --chown=appuser:appuser api-gateway/src/ .
-
-# Switch to non-root user (security best practice)
 USER appuser
 
-# =============================================================================
-# Environment Variables (no hardcoded credentials)
-# =============================================================================
 ENV PATH=/home/appuser/.local/bin:$PATH \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    # Service configuration (override via docker-compose or k8s)
     PORT=5000 \
     DEBUG=False \
     LOG_LEVEL=INFO \
-    # Gunicorn configuration
     GUNICORN_WORKERS=4 \
     GUNICORN_TIMEOUT=120 \
     GUNICORN_GRACEFUL_TIMEOUT=30 \
-    # Health check configuration
     HEALTH_CHECK_PATH=/health \
     READY_CHECK_PATH=/ready
 
-# Expose port (documentation only, actual binding via docker-compose/k8s)
 EXPOSE ${PORT}
 
-# =============================================================================
-# Health Check (for container orchestration)
-# - interval: time between health checks
-# - timeout: max time to wait for response
-# - start-period: grace period for container startup
-# - retries: consecutive failures before unhealthy
-# =============================================================================
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -f http://localhost:${PORT}${HEALTH_CHECK_PATH} || exit 1
 
-# =============================================================================
-# Graceful Shutdown Handling
-# - Use tini as init system to handle signals properly
-# - Gunicorn graceful-timeout for clean worker shutdown
-# - SIGTERM handling for Kubernetes/Docker Swarm
-# =============================================================================
 ENTRYPOINT ["/usr/bin/tini", "--"]
 
-# Run with gunicorn (production WSGI server)
-# - graceful-timeout: time for workers to finish requests on shutdown
-# - worker-tmp-dir: use memory for better performance
-# - preload: load app before forking workers (memory efficiency)
 CMD ["sh", "-c", "gunicorn \
     --bind 0.0.0.0:${PORT} \
     --workers ${GUNICORN_WORKERS} \
@@ -127,10 +80,3 @@ CMD ["sh", "-c", "gunicorn \
     --enable-stdio-inheritance \
     --log-level ${LOG_LEVEL} \
     app:app"]
-
-# =============================================================================
-# Resource Limits (set in docker-compose.yml or Kubernetes manifests)
-# Recommended limits for API Gateway:
-#   CPU: 500m - 1000m
-#   Memory: 256Mi - 512Mi
-# =============================================================================
