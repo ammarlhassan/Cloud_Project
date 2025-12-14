@@ -8,45 +8,65 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  ECR_REGISTRY: ACCOUNT_ID_YA_SHBAB.dkr.ecr.us-east-1.amazonaws.com
-  DOCKER_BUILDKIT: 1
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        service: [tts, stt, chat, document, quiz, gateway]
+        include:
+          - service: tts
+            dockerfile: Dockerfile.tts
+            image_name: tts-service
+          - service: stt
+            dockerfile: Dockerfile.stt
+            image_name: stt-service
+          - service: chat
+            dockerfile: Dockerfile.chat
+            image_name: chat-service
+          - service: document
+            dockerfile: Dockerfile.document
+            image_name: document-service
+          - service: quiz
+            dockerfile: Dockerfile.quiz
+            image_name: quiz-service
+          - service: gateway
+            dockerfile: Dockerfile.gateway
+            image_name: api-gateway
+
     steps:
       # Step 1: Checkout code
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # Step 2: Configure AWS credentials
+      # Step 2: Configure AWS credentials (WITH SESSION TOKEN)
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-access-key-id: ASIAU3XESGDANBIQRC7M
+          aws-secret-access-key: 1WY4vQjJuFP+70zxjqJBvutv9sJjiJ/HhesXXW4q    # (REQUIRED) Your AWS secret key
+          aws-session-token: IQoJb3JpZ2luX2VjEFsaCXVzLXdlc3QtMiJIMEYCIQDQU107CEtMv6s+4Ut13voVZaohyHJ98vxuW/pr6AekdwIhAPQL1mRufudXY9/EqURBveLhqmFfPKxsnIkuAL1H76GKKrYCCCQQABoMMzM0NDEzMDUwMDQ4Igw5JgCD2zcDOtxV7jYqkwKCX+aVfiRIOvn/UfNRrVGp/iZyP7xp/YZmBkgGFZ+j7B507eePcoebesgG22rdzzcOvh/pxtVkg99C5zCigxeTueKPcJf0Ut3OLVKUOf5/cp0YlROF/Qk1HaN/VX0F8t5h2+XjvR4lzaGjMiI3C6x7v0LYMJoa96len13rVvZoaoQUj7Z2YLJFf/v3hdPsKZfq8aH7PPz9ujh7QERuO4V5q/2k/LWt4X5jd0mTB0BUzAOv0mWI30rhY3wpMVNDEfk1VgOHVxl2xgv3s4FtJ7g09Ah60nnVZDIAw1CXELojNkOLgHgjfuKDPf7PPn7au6TrbIp6tjx79G4ZuNwOo8OVIHAHchLK8KJCf3qRmg8/RypAiDCB5fbJBjqcAQl+GyuIasfoqjyB/TYIXRqFVz9zOmvp7ZZ7UUnbujaIQybZOjyqhANS/EZ9UdGxgeB1tL12Fcs7moqgrFeXz8tFcJKpQltXoL8udmfxH07rGbIOTPInweVo2nzIR1S5eKtTugBQ+GCn5Nlg7LdE+UYMcMrgqvSIxrPT3Sicfd8WMAX0UyNb90h8RHra7D5n/35mOd3/eTDJyyv9FQ==
+          aws-region: us-east-1  
 
       # Step 3: Login to Amazon ECR
       - name: Login to ECR
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v1
 
-      # Step 4: Build Docker image
-      - name: Build Docker image
+      # Step 4: Build and Push Docker image
+      - name: Build and Push Docker image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          VERSION: 1.0.0
         run: |
-          SERVICE=${{ matrix.service }}
-          VERSION=1.0.0
+          echo "Building ${{ matrix.service }}..."
+          
+          # Build
           docker build \
-            -f docker/dockerfiles/Dockerfile.${SERVICE} \
-            -t $ECR_REGISTRY/${SERVICE}-service:${VERSION} .
-
-      # Step 5: Push Docker image to ECR
-      - name: Push Docker image
-        run: |
-          SERVICE=${{ matrix.service }}
-          VERSION=1.0.0
-          docker push $ECR_REGISTRY/${SERVICE}-service:${VERSION}
+            -f docker/dockerfiles/${{ matrix.dockerfile }} \
+            -t $ECR_REGISTRY/${{ matrix.image_name }}:$VERSION \
+            .
+          
+          # Push
+          docker push $ECR_REGISTRY/${{ matrix.image_name }}:$VERSION
