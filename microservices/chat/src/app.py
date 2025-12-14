@@ -273,62 +273,8 @@ def get_db_connection():
         return None
 
 
-def init_database():
-    """Initialize database tables"""
-    conn = get_db_connection()
-    if not conn:
-        logger.error("Failed to initialize database - no connection")
-        return False
-    
-    try:
-        cursor = conn.cursor()
-        
-        # Create sessions table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS chat_sessions (
-                session_id VARCHAR(36) PRIMARY KEY,
-                user_id VARCHAR(100) NOT NULL,
-                document_id VARCHAR(36),
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        # Create messages table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS chat_messages (
-                message_id VARCHAR(36) PRIMARY KEY,
-                session_id VARCHAR(36) NOT NULL,
-                user_id VARCHAR(100) NOT NULL,
-                role VARCHAR(20) NOT NULL,
-                content TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (session_id) REFERENCES chat_sessions(session_id)
-            )
-        """)
-        
-        # Create index for faster queries
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_messages_session 
-            ON chat_messages(session_id, created_at)
-        """)
-        
-        conn.commit()
-        cursor.close()
-        conn.close()
-        
-        logger.info("Database initialized successfully")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Database initialization error: {e}")
-        if conn:
-            conn.close()
-        return False
-
-
-# Initialize database on startup
-init_database()
+# Database initialization removed - using existing AWS RDS database
+# Tables are pre-configured in AWS RDS
 
 
 def generate_ai_response(message, conversation_history=None, document_context=None):
@@ -810,7 +756,7 @@ signal.signal(signal.SIGINT, graceful_shutdown)
 
 
 # Initialize services on startup
-init_database()
+# Database initialization removed - using existing AWS RDS database
 init_s3_client()
 get_redis_connection()
 init_openrouter_client()

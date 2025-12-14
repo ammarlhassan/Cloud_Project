@@ -128,71 +128,8 @@ def get_db_connection():
         return None
 
 
-def init_database():
-    """Initialize database tables"""
-    conn = get_db_connection()
-    if not conn:
-        logger.error("Failed to initialize database - no connection")
-        return False
-    
-    try:
-        cursor = conn.cursor()
-        
-        # Create documents table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS documents (
-                document_id VARCHAR(36) PRIMARY KEY,
-                user_id VARCHAR(100) NOT NULL,
-                filename VARCHAR(255) NOT NULL,
-                file_size BIGINT,
-                content_type VARCHAR(100),
-                s3_url TEXT NOT NULL,
-                text_content TEXT,
-                status VARCHAR(50) DEFAULT 'uploaded',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        # Create notes table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS notes (
-                note_id VARCHAR(36) PRIMARY KEY,
-                document_id VARCHAR(36) NOT NULL,
-                user_id VARCHAR(100) NOT NULL,
-                note_content TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (document_id) REFERENCES documents(document_id)
-            )
-        """)
-        
-        # Create indexes
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_documents_user 
-            ON documents(user_id, created_at DESC)
-        """)
-        
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_notes_document 
-            ON notes(document_id)
-        """)
-        
-        conn.commit()
-        cursor.close()
-        conn.close()
-        
-        logger.info("Database initialized successfully")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Database initialization error: {e}")
-        if conn:
-            conn.close()
-        return False
-
-
-# Initialize database on startup
-init_database()
+# Database initialization removed - using existing AWS RDS database
+# Tables are pre-configured in AWS RDS
 
 
 def ensure_s3_bucket():

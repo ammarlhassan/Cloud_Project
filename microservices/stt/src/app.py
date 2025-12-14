@@ -13,8 +13,6 @@ import boto3
 from botocore.exceptions import ClientError
 from kafka import KafkaProducer, KafkaConsumer
 from kafka.errors import KafkaError
-import psycopg2
-from psycopg2.extras import RealDictCursor
 import time
 import threading
 
@@ -35,12 +33,6 @@ KAFKA_BOOTSTRAP_SERVERS = os.environ.get('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9
 KAFKA_TOPIC_REQUEST = 'audio.transcription.requested'
 KAFKA_TOPIC_COMPLETED = 'audio.transcription.completed'
 
-# Database configuration
-DB_HOST = os.environ.get('DB_HOST', 'cloud-project-db.cjyjymrymgig.us-east-1.rds.amazonaws.com')
-DB_PORT = os.environ.get('DB_PORT', '5432')
-DB_NAME = os.environ.get('DB_NAME', 'stt_service')
-DB_USER = os.environ.get('DB_USER', 'postgres')
-DB_PASSWORD = os.environ.get('DB_PASSWORD', 'MySecurePassword123!')
 # Audio retention configuration
 AUDIO_RETENTION_DAYS = int(os.environ.get('AUDIO_RETENTION_DAYS', '30'))
 
@@ -82,211 +74,117 @@ def create_kafka_producer():
 kafka_producer = create_kafka_producer()
 
 
-def get_db_connection():
-    """Get PostgreSQL database connection"""
+# S3 Storage Functions (No Database)
+def save_transcription_to_s3(transcription_id, transcription_data):
+    """Save transcription metadata to S3"""
     try:
-        conn = psycopg2.connect(
-            host=DB_HOST,
-            port=DB_PORT,
-            database=DB_NAME,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            cursor_factory=RealDictCursor
+        s3_key = f"transcriptions/{transcription_id}/metadata.json"
+        s3_client.put_object(
+            Bucket=S3_BUCKET,
+            Key=s3_key,
+            Body=json.dumps(transcription_data, default=str),
+            ContentType='application/json'
         )
-        return conn
+        logger.info(f"Transcription saved to S3: {s3_key}")
+        return True
     except Exception as e:
-        logger.error(f"Database connection error: {e}")
+        logger.error(f"Error saving transcription to S3: {e}")
+        return False
+
+
+def get_transcription_from_s3(transcription_id):
+    """Get transcription metadata from S3"""
+    try:
+        s3_key = f"transcriptions/{transcription_id}/metadata.json"
+        response = s3_client.get_object(Bucket=S3_BUCKET, Key=s3_key)
+        data = json.loads(response['Body'].read())
+        return data
+    except ClientError as e:
+        if e.response['Error']['Code'] == 'NoSuchKey':
+            logger.warning(f"Transcription not found: {transcription_id}")
+        else:
+            logger.error(f"Error getting transcription from S3: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Error reading transcription from S3: {e}")
         return None
 
 
-def init_database():
-    """Initialize database tables"""
-    conn = get_db_connection()
-    if not conn:
-        logger.error("Failed to initialize database - no connection")
-        return False
-    
+def list_user_transcriptions_from_s3(user_id, limit=50):
+    """List user's transcriptions from S3"""
     try:
-        cursor = conn.cursor()
+        prefix = f"transcriptions/"
+        response = s3_client.list_objects_v2(
+            Bucket=S3_BUCKET,
+            Prefix=prefix,
+            MaxKeys=1000
+        )
         
-        # Create transcriptions table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS transcriptions (
-                transcription_id VARCHAR(36) PRIMARY KEY,
-                user_id VARCHAR(100) NOT NULL,
-                audio_url TEXT NOT NULL,
-                transcript TEXT,
-                language_code VARCHAR(10) NOT NULL,
-                confidence_score FLOAT,
-                status VARCHAR(20) NOT NULL,
-                file_size INTEGER,
-                duration_seconds FLOAT,
-                job_name VARCHAR(200),
-                error_message TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                completed_at TIMESTAMP
-            )
-        """)
+        transcriptions = []
+        if 'Contents' in response:
+            for obj in response['Contents']:
+                if obj['Key'].endswith('metadata.json'):
+                    try:
+                        data = get_transcription_from_s3(
+                            obj['Key'].split('/')[1]
+                        )
+                        if data and data.get('user_id') == user_id:
+                            transcriptions.append(data)
+                    except:
+                        continue
         
-        # Create index for faster queries
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_transcriptions_user 
-            ON transcriptions(user_id, created_at DESC)
-        """)
-        
-        cursor.execute("""
-            CREATE INDEX IF NOT EXISTS idx_transcriptions_status 
-            ON transcriptions(status, created_at)
-        """)
-        
-        conn.commit()
-        cursor.close()
-        conn.close()
-        
-        logger.info("Database initialized successfully")
-        return True
+        # Sort by created_at and limit
+        transcriptions.sort(
+            key=lambda x: x.get('created_at', ''),
+            reverse=True
+        )
+        return transcriptions[:limit]
         
     except Exception as e:
-        logger.error(f"Database initialization error: {e}")
-        if conn:
-            conn.close()
-        return False
-
-
-# Initialize database on startup
-init_database()
+        logger.error(f"Error listing transcriptions from S3: {e}")
+        return []
 
 
 def save_transcription(transcription_data):
-    """Save transcription to database"""
-    conn = get_db_connection()
-    if not conn:
-        return False
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO transcriptions 
-            (transcription_id, user_id, audio_url, transcript, language_code, 
-             confidence_score, status, file_size, job_name, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-        """, (
-            transcription_data['transcription_id'],
-            transcription_data['user_id'],
-            transcription_data['audio_url'],
-            transcription_data.get('transcript', ''),
-            transcription_data['language_code'],
-            transcription_data.get('confidence_score'),
-            transcription_data['status'],
-            transcription_data.get('file_size'),
-            transcription_data.get('job_name'),
-            datetime.utcnow()
-        ))
-        
-        conn.commit()
-        cursor.close()
-        conn.close()
-        logger.info(f"Transcription saved: {transcription_data['transcription_id']}")
-        return True
-        
-    except Exception as e:
-        logger.error(f"Error saving transcription: {e}")
-        if conn:
-            conn.close()
-        return False
+    """Save transcription to S3"""
+    transcription_data['created_at'] = datetime.utcnow().isoformat()
+    transcription_data['updated_at'] = datetime.utcnow().isoformat()
+    return save_transcription_to_s3(
+        transcription_data['transcription_id'],
+        transcription_data
+    )
 
 
 def update_transcription(transcription_id, update_data):
-    """Update transcription record"""
-    conn = get_db_connection()
-    if not conn:
-        return False
-    
+    """Update transcription record in S3"""
     try:
-        cursor = conn.cursor()
+        # Get existing data
+        existing_data = get_transcription_from_s3(transcription_id)
+        if not existing_data:
+            logger.error(f"Transcription not found for update: {transcription_id}")
+            return False
         
-        # Build dynamic UPDATE query
-        set_clause = ', '.join([f"{key} = %s" for key in update_data.keys()])
-        set_clause += ', updated_at = %s'
+        # Update fields
+        existing_data.update(update_data)
+        existing_data['updated_at'] = datetime.utcnow().isoformat()
         
-        values = list(update_data.values())
-        values.append(datetime.utcnow())
-        values.append(transcription_id)
-        
-        cursor.execute(f"""
-            UPDATE transcriptions 
-            SET {set_clause}
-            WHERE transcription_id = %s
-        """, values)
-        
-        conn.commit()
-        cursor.close()
-        conn.close()
-        logger.info(f"Transcription updated: {transcription_id}")
-        return True
+        # Save back to S3
+        return save_transcription_to_s3(transcription_id, existing_data)
         
     except Exception as e:
         logger.error(f"Error updating transcription: {e}")
-        if conn:
-            conn.close()
         return False
 
 
 def get_transcription_by_id(transcription_id):
-    """Get transcription by ID"""
-    conn = get_db_connection()
-    if not conn:
-        return None
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT * FROM transcriptions 
-            WHERE transcription_id = %s
-        """, (transcription_id,))
-        
-        result = cursor.fetchone()
-        cursor.close()
-        conn.close()
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"Error fetching transcription: {e}")
-        if conn:
-            conn.close()
-        return None
+    """Get transcription by ID from S3"""
+    return get_transcription_from_s3(transcription_id)
 
 
 def get_user_transcriptions(user_id, limit=50, offset=0):
-    """Get user's transcription history"""
-    conn = get_db_connection()
-    if not conn:
-        return []
-    
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT transcription_id, audio_url, transcript, language_code, 
-                   status, file_size, created_at, completed_at
-            FROM transcriptions 
-            WHERE user_id = %s
-            ORDER BY created_at DESC
-            LIMIT %s OFFSET %s
-        """, (user_id, limit, offset))
-        
-        results = cursor.fetchall()
-        cursor.close()
-        conn.close()
-        
-        return results
-        
-    except Exception as e:
-        logger.error(f"Error fetching user transcriptions: {e}")
-        if conn:
-            conn.close()
-        return []
+    """Get user's transcription history from S3"""
+    transcriptions = list_user_transcriptions_from_s3(user_id, limit + offset)
+    return transcriptions[offset:offset + limit]
 
 
 def delete_old_audio_files():
@@ -668,8 +566,6 @@ def publish_to_kafka(topic, message):
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
-    db_healthy = get_db_connection() is not None
-    
     health_status = {
         'service': 'stt',
         'status': 'healthy',
@@ -677,8 +573,7 @@ def health_check():
         'components': {
             'transcribe': transcribe_client is not None,
             's3': s3_client is not None,
-            'kafka': kafka_producer is not None,
-            'database': db_healthy
+            'kafka': kafka_producer is not None
         }
     }
     
