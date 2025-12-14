@@ -47,7 +47,7 @@ services:
     environment:
       DB_HOST: ${CHAT_DB_HOST:-cloud-project-db.cjyjymrymgig.us-east-1.rds.amazonaws.com}
       DB_PORT: 5432
-      DB_NAME: chat_db
+      DB_NAME: chat_service
       DB_USER: ${CHAT_DB_USER:-postgres}
       DB_PASSWORD: ${CHAT_DB_PASSWORD}
       KAFKA_BOOTSTRAP_SERVERS: "10.0.30.34:9092,10.0.30.125:9092,10.0.31.223:9092"
@@ -68,7 +68,7 @@ services:
     environment:
       DB_HOST: ${DOCUMENT_DB_HOST:-cloud-project-db.cjyjymrymgig.us-east-1.rds.amazonaws.com}
       DB_PORT: 5432
-      DB_NAME: document_db
+      DB_NAME: document_reader
       DB_USER: ${DOCUMENT_DB_USER:-postgres}
       DB_PASSWORD: ${DOCUMENT_DB_PASSWORD}
       KAFKA_BOOTSTRAP_SERVERS: "10.0.30.34:9092,10.0.30.125:9092,10.0.31.223:9092"
@@ -89,7 +89,7 @@ services:
     environment:
       DB_HOST: ${QUIZ_DB_HOST:-cloud-project-db.cjyjymrymgig.us-east-1.rds.amazonaws.com}
       DB_PORT: 5432
-      DB_NAME: chat_service
+      DB_NAME: quiz_service
       DB_USER: ${QUIZ_DB_USER:-postgres}
       DB_PASSWORD: ${QUIZ_DB_PASSWORD}
       KAFKA_BOOTSTRAP_SERVERS: "10.0.30.34:9092,10.0.30.125:9092,10.0.31.223:9092"
