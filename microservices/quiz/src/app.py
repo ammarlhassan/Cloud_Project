@@ -43,7 +43,7 @@ KAFKA_TOPIC_NOTES_GENERATED = 'notes.generated'
 
 # S3 Configuration
 AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
-S3_BUCKET_NAME = os.environ.get('S3_BUCKET_NAME', 'quiz-service-storage-dev-334413050048')
+S3_BUCKET_NAME = os.environ.get('S3_BUCKET_NAME', 'cse363-quiz-service-dev-334413050048')
 AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID', '')
 AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
 
