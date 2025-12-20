@@ -43,7 +43,7 @@ KAFKA_TOPIC_NOTES_GENERATED = 'notes.generated'
 
 # S3 Configuration
 AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
-S3_BUCKET_NAME = os.environ.get('S3_BUCKET_NAME', 'quiz-service-storage-dev-334413050048')
+S3_BUCKET_NAME = os.environ.get('S3_BUCKET_NAME', 'quiz-service-storage-dev-653040176723')
 AWS_ACCESS_KEY_ID = os.environ.get('AWS_ACCESS_KEY_ID', '')
 AWS_SECRET_ACCESS_KEY = os.environ.get('AWS_SECRET_ACCESS_KEY', '')
 
@@ -161,6 +161,7 @@ def start_kafka_consumer():
                 consumer = KafkaConsumer(
                     KAFKA_TOPIC_REQUEST,
                     KAFKA_TOPIC_NOTES_GENERATED,
+                    'document.uploaded',  # <--- Add this line
                     bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
                     value_deserializer=lambda m: json.loads(m.decode('utf-8')),
                     group_id='quiz-service-group',
@@ -181,6 +182,9 @@ def start_kafka_consumer():
                             handle_quiz_requested(data)
                         elif topic == KAFKA_TOPIC_NOTES_GENERATED:
                             handle_notes_generated(data)
+                        elif topic == 'document.uploaded': # <--- Add this check
+                            # You will need to define this function
+                            handle_document_uploaded(data)
                             
                     except Exception as e:
                         logger.error(f"Error processing message: {e}")
@@ -218,7 +222,18 @@ def handle_notes_generated(data):
         # Can cache or use notes content for better quiz generation
     except Exception as e:
         logger.error(f"Error handling notes.generated: {e}")
-
+def handle_document_uploaded(data):
+    """Handle document.uploaded event"""
+    try:
+        document_id = data.get('document_id')
+        user_id = data.get('user_id')
+        filename = data.get('filename', 'Unknown File')
+        
+        # Just logging that we received it
+        logger.info(f"RECEIVED document.uploaded: {filename} (ID: {document_id}) from User: {user_id}")
+        
+    except Exception as e:
+        logger.error(f"Error handling document.uploaded: {e}")
 
 # Start Kafka consumer on startup
 start_kafka_consumer()

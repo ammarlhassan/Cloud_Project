@@ -1,6 +1,7 @@
 """
 Text-to-Speech (TTS) Microservice
-Converts text to audio using AWS Polly and publishes results to Kafka
+Converts text to audio using gTTS (Google Text-to-Speech) and publishes results to Kafka
+Stores audio files in S3
 """
 import os
 import json
@@ -11,6 +12,7 @@ from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 import boto3
 from botocore.exceptions import ClientError
+from gtts import gTTS
 from kafka import KafkaProducer, KafkaConsumer
 from kafka.errors import KafkaError
 import time
@@ -32,7 +34,7 @@ CORS(app)
 
 # Environment configuration
 AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
-S3_BUCKET = os.environ.get('S3_BUCKET_TTS', 'tts-service-storage-dev-334413050048')
+S3_BUCKET = os.environ.get('S3_BUCKET_TTS', 'cse363-tts-service-storage-dev-334413050048')
 KAFKA_BOOTSTRAP_SERVERS = os.environ.get('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092').split(',')
 KAFKA_TOPIC_REQUEST = 'audio.generation.requested'
 KAFKA_TOPIC_COMPLETED = 'audio.generation.completed'
@@ -43,23 +45,32 @@ AUDIO_RETENTION_DAYS = int(os.environ.get('AUDIO_RETENTION_DAYS', '7'))
 
 # Supported audio formats and their content types
 AUDIO_FORMATS = {
-    'mp3': {'polly': 'mp3', 'content_type': 'audio/mpeg'},
-    'ogg': {'polly': 'ogg_vorbis', 'content_type': 'audio/ogg'},
-    'wav': {'polly': 'pcm', 'content_type': 'audio/wav'}
+    'mp3': {'content_type': 'audio/mpeg'}
+}
+
+# Voice/language mapping for gTTS
+VOICE_LANGUAGE_MAP = {
+    'Joanna': 'en',      # English (US)
+    'Matthew': 'en',     # English (US)
+    'Amy': 'en-uk',      # English (UK)
+    'Brian': 'en-uk',    # English (UK)
+    'Emma': 'en-uk',     # English (UK)
+    'Ivy': 'en',         # English (US)
+    'default': 'en'      # Default to English
 }
 
 # Shutdown flag for graceful termination
 shutdown_flag = threading.Event()
 
-# Initialize AWS clients
+# Initialize AWS S3 client (still needed for storage)
 try:
-    polly_client = boto3.client('polly', region_name=AWS_REGION)
     s3_client = boto3.client('s3', region_name=AWS_REGION)
-    logger.info("AWS clients initialized successfully")
+    logger.info("AWS S3 client initialized successfully")
 except Exception as e:
-    logger.error(f"Failed to initialize AWS clients: {e}")
-    polly_client = None
+    logger.error(f"Failed to initialize AWS S3 client: {e}")
     s3_client = None
+
+logger.info("Using gTTS (Google Text-to-Speech) - No Polly credentials needed!")
 
 # Initialize Redis client
 try:
@@ -131,56 +142,41 @@ def ensure_s3_bucket():
 
 def convert_text_to_speech(text, voice_id='Joanna', output_format='mp3', language_code=None):
     """
-    Convert text to speech using AWS Polly
+    Convert text to speech using gTTS (Google Text-to-Speech)
     
     Args:
         text: Text to convert
-        voice_id: Polly voice ID (default: Joanna)
-        output_format: Audio format (mp3, ogg, wav)
+        voice_id: Voice ID mapped to language (default: Joanna -> en)
+        output_format: Audio format (only mp3 supported by gTTS)
         language_code: Optional language code override
     
     Returns:
         tuple: (audio_stream, content_type) or (None, None) on error
     """
-    if not polly_client:
-        logger.error("Polly client not initialized")
-        return None, None
+    # Only MP3 is supported by gTTS
+    if output_format.lower() != 'mp3':
+        logger.warning(f"gTTS only supports MP3, converting {output_format} request to MP3")
+        output_format = 'mp3'
     
-    # Validate and map format
-    format_info = AUDIO_FORMATS.get(output_format.lower())
-    if not format_info:
-        logger.error(f"Unsupported audio format: {output_format}")
-        return None, None
-    
-    polly_format = format_info['polly']
-    content_type = format_info['content_type']
+    content_type = 'audio/mpeg'
     
     try:
-        params = {
-            'Text': text,
-            'OutputFormat': polly_format,
-            'VoiceId': voice_id
-        }
+        # Map voice to language
+        language = language_code if language_code else VOICE_LANGUAGE_MAP.get(voice_id, 'en')
         
-        # Use neural engine if supported (not for PCM)
-        if polly_format != 'pcm':
-            params['Engine'] = 'neural'
+        # Generate speech using gTTS
+        tts = gTTS(text=text, lang=language, slow=False)
         
-        if language_code:
-            params['LanguageCode'] = language_code
+        # Save to BytesIO object
+        audio_fp = BytesIO()
+        tts.write_to_fp(audio_fp)
+        audio_fp.seek(0)
         
-        response = polly_client.synthesize_speech(**params)
+        logger.info(f"Successfully generated speech: format=mp3, language={language}, length={len(text)}")
+        return audio_fp, content_type
         
-        audio_stream = response.get('AudioStream')
-        
-        logger.info(f"Successfully generated speech: format={output_format}, voice={voice_id}, length={len(text)}")
-        return audio_stream, content_type
-        
-    except ClientError as e:
-        logger.error(f"Polly synthesis error: {e}")
-        return None, None
     except Exception as e:
-        logger.error(f"Unexpected error in text-to-speech conversion: {e}")
+        logger.error(f"gTTS synthesis error: {e}")
         return None, None
 
 
@@ -579,26 +575,59 @@ def synthesize_speech():
 
 @app.route('/api/v1/tts/voices', methods=['GET'])
 def list_voices():
-    """List available Polly voices"""
+    """List available gTTS voices (language mappings)"""
     try:
-        if not polly_client:
-            return jsonify({'error': 'Polly client not available'}), 503
-        
-        response = polly_client.describe_voices()
-        voices = response.get('Voices', [])
-        
-        # Filter and format voice information
+        # Return available voice/language mappings for gTTS
         voice_list = [
             {
-                'id': voice['Id'],
-                'name': voice['Name'],
-                'language': voice['LanguageCode'],
-                'gender': voice['Gender']
+                'id': 'Joanna',
+                'name': 'Joanna',
+                'language': 'en',
+                'gender': 'Female',
+                'description': 'English (US)'
+            },
+            {
+                'id': 'Matthew',
+                'name': 'Matthew',
+                'language': 'en',
+                'gender': 'Male',
+                'description': 'English (US)'
+            },
+            {
+                'id': 'Amy',
+                'name': 'Amy',
+                'language': 'en-uk',
+                'gender': 'Female',
+                'description': 'English (UK)'
+            },
+            {
+                'id': 'Brian',
+                'name': 'Brian',
+                'language': 'en-uk',
+                'gender': 'Male',
+                'description': 'English (UK)'
+            },
+            {
+                'id': 'Emma',
+                'name': 'Emma',
+                'language': 'en-uk',
+                'gender': 'Female',
+                'description': 'English (UK)'
+            },
+            {
+                'id': 'Ivy',
+                'name': 'Ivy',
+                'language': 'en',
+                'gender': 'Female',
+                'description': 'English (US)'
             }
-            for voice in voices
         ]
         
-        return jsonify({'voices': voice_list}), 200
+        return jsonify({
+            'voices': voice_list,
+            'engine': 'gTTS (Google Text-to-Speech)',
+            'note': 'Voice IDs map to language codes for gTTS'
+        }), 200
         
     except Exception as e:
         logger.error(f"Error listing voices: {e}")

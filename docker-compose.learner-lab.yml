@@ -12,10 +12,16 @@ services:
       - "5001:5001"
     networks:
       - learner-lab-network
+    # ISOLATION: Unique volume for this container
+    volumes:
+      - tts-temp:/tmp
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "10.0.30.34:9092,10.0.30.125:9092,10.0.31.223:9092"
       ZOOKEEPER_HOSTS: "10.0.31.251:2181,10.0.30.226:2181,10.0.30.180:2181"
       PORT: 5001
+      AWS_ACCESS_KEY_ID: "ASIAU3XESGDAN2KFJEUY"
+      AWS_SECRET_ACCESS_KEY: "somPJKTM3zEUW3NzQz/tq+XqLWh3aPtjbcaAo8sq"
+      AWS_SESSION_TOKEN: "IQoJb3JpZ2luX2VjENP//////////wEaCXVzLXdlc3QtMiJGMEQCIGZll/EC6ZYBU/69FtYXIL/akcGTsvOE7mn9nPuowgzjAiB/6I81dunZzQQCcLci7lRLk/Kt5rZDya4MDs/+TB9pnSq/Agic//////////8BEAAaDDMzNDQxMzA1MDA0OCIMOecY4BqtJTPmVQheKpMC3iEWvP/sKv48YwO+W79VAuRcn/W3rvJD9lwvvCEyIuUu0vkf7oFayvtHMksvqt1F3OHEQiUYVXmXbPJy4YNmeSyu7UM83HExpbLfAuk34ZqNXZtcn7b+T8os/zAxhx2opNYwGsm+IyXvD7mDZi3aJ38EnJgqfk2MNXIEnK3T/f3mmVkfMYCiinF2ej1Yot083i2Gl/Uw+j89XFsJc1ZaOaLBFAD1xdOWnVNYTCKaGMTs977cflgp1l/J1+BKg7cqnBwfWllkvAkqfTR+ijA1SY5ZrPoIn6+UN7nGycvt/3RXtJ647YE4Ls+IOWxq5MqKqWgLsY/d7w8ZrBBDamNN+WnK8zfXZNRoGfhBXScm+356gYowrZWRygY6ngEZL+Wdt6v1VIw6J0hrQK5Z4jAzrvhT/gkc94yEwzdHLo2eZ4obZOgNIphbmvTOyLRK1XP7HiibXZTqINYaI3L13Yp/t1NxMMHFZrzkus0YKfuWt3qqSGNhks4gffmCeEUAyKR0GkHt/i+E+FH0KSqplPK2PVpA9zhzZPJWCu6bnZRyCM+aEqry63cs42gBw2QbVZoGjvXSItD3l3pxLA=="
 
   stt-service:
     build:
@@ -28,10 +34,16 @@ services:
       - "5002:5002"
     networks:
       - learner-lab-network
+    # ISOLATION: Unique volume for this container
+    volumes:
+      - stt-temp:/tmp
     environment:
       KAFKA_BOOTSTRAP_SERVERS: "10.0.30.34:9092,10.0.30.125:9092,10.0.31.223:9092"
       ZOOKEEPER_HOSTS: "10.0.31.251:2181,10.0.30.226:2181,10.0.30.180:2181"
       PORT: 5002
+      AWS_ACCESS_KEY_ID: "ASIAU3XESGDAN2KFJEUY"
+      AWS_SECRET_ACCESS_KEY: "somPJKTM3zEUW3NzQz/tq+XqLWh3aPtjbcaAo8sq"
+      AWS_SESSION_TOKEN: "IQoJb3JpZ2luX2VjENP//////////wEaCXVzLXdlc3QtMiJGMEQCIGZll/EC6ZYBU/69FtYXIL/akcGTsvOE7mn9nPuowgzjAiB/6I81dunZzQQCcLci7lRLk/Kt5rZDya4MDs/+TB9pnSq/Agic//////////8BEAAaDDMzNDQxMzA1MDA0OCIMOecY4BqtJTPmVQheKpMC3iEWvP/sKv48YwO+W79VAuRcn/W3rvJD9lwvvCEyIuUu0vkf7oFayvtHMksvqt1F3OHEQiUYVXmXbPJy4YNmeSyu7UM83HExpbLfAuk34ZqNXZtcn7b+T8os/zAxhx2opNYwGsm+IyXvD7mDZi3aJ38EnJgqfk2MNXIEnK3T/f3mmVkfMYCiinF2ej1Yot083i2Gl/Uw+j89XFsJc1ZaOaLBFAD1xdOWnVNYTCKaGMTs977cflgp1l/J1+BKg7cqnBwfWllkvAkqfTR+ijA1SY5ZrPoIn6+UN7nGycvt/3RXtJ647YE4Ls+IOWxq5MqKqWgLsY/d7w8ZrBBDamNN+WnK8zfXZNRoGfhBXScm+356gYowrZWRygY6ngEZL+Wdt6v1VIw6J0hrQK5Z4jAzrvhT/gkc94yEwzdHLo2eZ4obZOgNIphbmvTOyLRK1XP7HiibXZTqINYaI3L13Yp/t1NxMMHFZrzkus0YKfuWt3qqSGNhks4gffmCeEUAyKR0GkHt/i+E+FH0KSqplPK2PVpA9zhzZPJWCu6bnZRyCM+aEqry63cs42gBw2QbVZoGjvXSItD3l3pxLA=="
 
   chat-service:
     build:
@@ -44,15 +56,21 @@ services:
       - "5003:5003"
     networks:
       - learner-lab-network
+    # ISOLATION: Unique volume for this container
+    volumes:
+      - chat-temp:/tmp
     environment:
       DB_HOST: ${CHAT_DB_HOST:-cloud-project-db.cjyjymrymgig.us-east-1.rds.amazonaws.com}
       DB_PORT: 5432
-      DB_NAME: chat_db
+      DB_NAME: chat_service
       DB_USER: ${CHAT_DB_USER:-postgres}
       DB_PASSWORD: ${CHAT_DB_PASSWORD}
       KAFKA_BOOTSTRAP_SERVERS: "10.0.30.34:9092,10.0.30.125:9092,10.0.31.223:9092"
       ZOOKEEPER_HOSTS: "10.0.31.251:2181,10.0.30.226:2181,10.0.30.180:2181"
       PORT: 5003
+      AWS_ACCESS_KEY_ID: "ASIAU3XESGDAN2KFJEUY"
+      AWS_SECRET_ACCESS_KEY: "somPJKTM3zEUW3NzQz/tq+XqLWh3aPtjbcaAo8sq"
+      AWS_SESSION_TOKEN: "IQoJb3JpZ2luX2VjENP//////////wEaCXVzLXdlc3QtMiJGMEQCIGZll/EC6ZYBU/69FtYXIL/akcGTsvOE7mn9nPuowgzjAiB/6I81dunZzQQCcLci7lRLk/Kt5rZDya4MDs/+TB9pnSq/Agic//////////8BEAAaDDMzNDQxMzA1MDA0OCIMOecY4BqtJTPmVQheKpMC3iEWvP/sKv48YwO+W79VAuRcn/W3rvJD9lwvvCEyIuUu0vkf7oFayvtHMksvqt1F3OHEQiUYVXmXbPJy4YNmeSyu7UM83HExpbLfAuk34ZqNXZtcn7b+T8os/zAxhx2opNYwGsm+IyXvD7mDZi3aJ38EnJgqfk2MNXIEnK3T/f3mmVkfMYCiinF2ej1Yot083i2Gl/Uw+j89XFsJc1ZaOaLBFAD1xdOWnVNYTCKaGMTs977cflgp1l/J1+BKg7cqnBwfWllkvAkqfTR+ijA1SY5ZrPoIn6+UN7nGycvt/3RXtJ647YE4Ls+IOWxq5MqKqWgLsY/d7w8ZrBBDamNN+WnK8zfXZNRoGfhBXScm+356gYowrZWRygY6ngEZL+Wdt6v1VIw6J0hrQK5Z4jAzrvhT/gkc94yEwzdHLo2eZ4obZOgNIphbmvTOyLRK1XP7HiibXZTqINYaI3L13Yp/t1NxMMHFZrzkus0YKfuWt3qqSGNhks4gffmCeEUAyKR0GkHt/i+E+FH0KSqplPK2PVpA9zhzZPJWCu6bnZRyCM+aEqry63cs42gBw2QbVZoGjvXSItD3l3pxLA=="
 
   document-service:
     build:
@@ -65,15 +83,21 @@ services:
       - "5004:5004"
     networks:
       - learner-lab-network
+    # ISOLATION: Unique volume for this container
+    volumes:
+      - document-temp:/tmp
     environment:
       DB_HOST: ${DOCUMENT_DB_HOST:-cloud-project-db.cjyjymrymgig.us-east-1.rds.amazonaws.com}
       DB_PORT: 5432
-      DB_NAME: document_db
+      DB_NAME: document_reader
       DB_USER: ${DOCUMENT_DB_USER:-postgres}
       DB_PASSWORD: ${DOCUMENT_DB_PASSWORD}
       KAFKA_BOOTSTRAP_SERVERS: "10.0.30.34:9092,10.0.30.125:9092,10.0.31.223:9092"
       ZOOKEEPER_HOSTS: "10.0.31.251:2181,10.0.30.226:2181,10.0.30.180:2181"
       PORT: 5004
+      AWS_ACCESS_KEY_ID: "ASIAU3XESGDAN2KFJEUY"
+      AWS_SECRET_ACCESS_KEY: "somPJKTM3zEUW3NzQz/tq+XqLWh3aPtjbcaAo8sq"
+      AWS_SESSION_TOKEN: "IQoJb3JpZ2luX2VjENP//////////wEaCXVzLXdlc3QtMiJGMEQCIGZll/EC6ZYBU/69FtYXIL/akcGTsvOE7mn9nPuowgzjAiB/6I81dunZzQQCcLci7lRLk/Kt5rZDya4MDs/+TB9pnSq/Agic//////////8BEAAaDDMzNDQxMzA1MDA0OCIMOecY4BqtJTPmVQheKpMC3iEWvP/sKv48YwO+W79VAuRcn/W3rvJD9lwvvCEyIuUu0vkf7oFayvtHMksvqt1F3OHEQiUYVXmXbPJy4YNmeSyu7UM83HExpbLfAuk34ZqNXZtcn7b+T8os/zAxhx2opNYwGsm+IyXvD7mDZi3aJ38EnJgqfk2MNXIEnK3T/f3mmVkfMYCiinF2ej1Yot083i2Gl/Uw+j89XFsJc1ZaOaLBFAD1xdOWnVNYTCKaGMTs977cflgp1l/J1+BKg7cqnBwfWllkvAkqfTR+ijA1SY5ZrPoIn6+UN7nGycvt/3RXtJ647YE4Ls+IOWxq5MqKqWgLsY/d7w8ZrBBDamNN+WnK8zfXZNRoGfhBXScm+356gYowrZWRygY6ngEZL+Wdt6v1VIw6J0hrQK5Z4jAzrvhT/gkc94yEwzdHLo2eZ4obZOgNIphbmvTOyLRK1XP7HiibXZTqINYaI3L13Yp/t1NxMMHFZrzkus0YKfuWt3qqSGNhks4gffmCeEUAyKR0GkHt/i+E+FH0KSqplPK2PVpA9zhzZPJWCu6bnZRyCM+aEqry63cs42gBw2QbVZoGjvXSItD3l3pxLA=="
 
   quiz-service:
     build:
@@ -86,15 +110,21 @@ services:
       - "5005:5005"
     networks:
       - learner-lab-network
+    # ISOLATION: Unique volume for this container
+    volumes:
+      - quiz-temp:/tmp
     environment:
       DB_HOST: ${QUIZ_DB_HOST:-cloud-project-db.cjyjymrymgig.us-east-1.rds.amazonaws.com}
       DB_PORT: 5432
-      DB_NAME: chat_service
+      DB_NAME: quiz_service
       DB_USER: ${QUIZ_DB_USER:-postgres}
       DB_PASSWORD: ${QUIZ_DB_PASSWORD}
       KAFKA_BOOTSTRAP_SERVERS: "10.0.30.34:9092,10.0.30.125:9092,10.0.31.223:9092"
       ZOOKEEPER_HOSTS: "10.0.31.251:2181,10.0.30.226:2181,10.0.30.180:2181"
       PORT: 5005
+      AWS_ACCESS_KEY_ID: "ASIAU3XESGDAN2KFJEUY"
+      AWS_SECRET_ACCESS_KEY: "somPJKTM3zEUW3NzQz/tq+XqLWh3aPtjbcaAo8sq"
+      AWS_SESSION_TOKEN: "IQoJb3JpZ2luX2VjENP//////////wEaCXVzLXdlc3QtMiJGMEQCIGZll/EC6ZYBU/69FtYXIL/akcGTsvOE7mn9nPuowgzjAiB/6I81dunZzQQCcLci7lRLk/Kt5rZDya4MDs/+TB9pnSq/Agic//////////8BEAAaDDMzNDQxMzA1MDA0OCIMOecY4BqtJTPmVQheKpMC3iEWvP/sKv48YwO+W79VAuRcn/W3rvJD9lwvvCEyIuUu0vkf7oFayvtHMksvqt1F3OHEQiUYVXmXbPJy4YNmeSyu7UM83HExpbLfAuk34ZqNXZtcn7b+T8os/zAxhx2opNYwGsm+IyXvD7mDZi3aJ38EnJgqfk2MNXIEnK3T/f3mmVkfMYCiinF2ej1Yot083i2Gl/Uw+j89XFsJc1ZaOaLBFAD1xdOWnVNYTCKaGMTs977cflgp1l/J1+BKg7cqnBwfWllkvAkqfTR+ijA1SY5ZrPoIn6+UN7nGycvt/3RXtJ647YE4Ls+IOWxq5MqKqWgLsY/d7w8ZrBBDamNN+WnK8zfXZNRoGfhBXScm+356gYowrZWRygY6ngEZL+Wdt6v1VIw6J0hrQK5Z4jAzrvhT/gkc94yEwzdHLo2eZ4obZOgNIphbmvTOyLRK1XP7HiibXZTqINYaI3L13Yp/t1NxMMHFZrzkus0YKfuWt3qqSGNhks4gffmCeEUAyKR0GkHt/i+E+FH0KSqplPK2PVpA9zhzZPJWCu6bnZRyCM+aEqry63cs42gBw2QbVZoGjvXSItD3l3pxLA=="
 
   api-gateway:
     build:
@@ -107,6 +137,9 @@ services:
       - "5000:5000"
     networks:
       - learner-lab-network
+    # ISOLATION: Unique volume for this container
+    volumes:
+      - gateway-temp:/tmp
     environment:
       TTS_SERVICE_URL: http://tts-service:5001
       STT_SERVICE_URL: http://stt-service:5002
@@ -114,6 +147,9 @@ services:
       DOCUMENT_SERVICE_URL: http://document-service:5004
       QUIZ_SERVICE_URL: http://quiz-service:5005
       PORT: 5000
+      AWS_ACCESS_KEY_ID: "ASIAU3XESGDAN2KFJEUY"
+      AWS_SECRET_ACCESS_KEY: "somPJKTM3zEUW3NzQz/tq+XqLWh3aPtjbcaAo8sq"
+      AWS_SESSION_TOKEN: "IQoJb3JpZ2luX2VjENP//////////wEaCXVzLXdlc3QtMiJGMEQCIGZll/EC6ZYBU/69FtYXIL/akcGTsvOE7mn9nPuowgzjAiB/6I81dunZzQQCcLci7lRLk/Kt5rZDya4MDs/+TB9pnSq/Agic//////////8BEAAaDDMzNDQxMzA1MDA0OCIMOecY4BqtJTPmVQheKpMC3iEWvP/sKv48YwO+W79VAuRcn/W3rvJD9lwvvCEyIuUu0vkf7oFayvtHMksvqt1F3OHEQiUYVXmXbPJy4YNmeSyu7UM83HExpbLfAuk34ZqNXZtcn7b+T8os/zAxhx2opNYwGsm+IyXvD7mDZi3aJ38EnJgqfk2MNXIEnK3T/f3mmVkfMYCiinF2ej1Yot083i2Gl/Uw+j89XFsJc1ZaOaLBFAD1xdOWnVNYTCKaGMTs977cflgp1l/J1+BKg7cqnBwfWllkvAkqfTR+ijA1SY5ZrPoIn6+UN7nGycvt/3RXtJ647YE4Ls+IOWxq5MqKqWgLsY/d7w8ZrBBDamNN+WnK8zfXZNRoGfhBXScm+356gYowrZWRygY6ngEZL+Wdt6v1VIw6J0hrQK5Z4jAzrvhT/gkc94yEwzdHLo2eZ4obZOgNIphbmvTOyLRK1XP7HiibXZTqINYaI3L13Yp/t1NxMMHFZrzkus0YKfuWt3qqSGNhks4gffmCeEUAyKR0GkHt/i+E+FH0KSqplPK2PVpA9zhzZPJWCu6bnZRyCM+aEqry63cs42gBw2QbVZoGjvXSItD3l3pxLA=="
 
 # --------------------------
 # Networks
@@ -121,3 +157,14 @@ services:
 networks:
   learner-lab-network:
     external: true
+
+# --------------------------
+# Volumes (NEW SECTION)
+# --------------------------
+volumes:
+  tts-temp:
+  stt-temp:
+  chat-temp:
+  document-temp:
+  quiz-temp:
+  gateway-temp:
