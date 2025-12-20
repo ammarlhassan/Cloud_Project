@@ -161,6 +161,7 @@ def start_kafka_consumer():
                 consumer = KafkaConsumer(
                     KAFKA_TOPIC_REQUEST,
                     KAFKA_TOPIC_NOTES_GENERATED,
+                    'document.uploaded',  # <--- Add this line
                     bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS,
                     value_deserializer=lambda m: json.loads(m.decode('utf-8')),
                     group_id='quiz-service-group',
