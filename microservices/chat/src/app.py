@@ -518,6 +518,7 @@ def send_message_simple(current_user_id):
         return jsonify({'error': 'Internal server error'}), 500
 
 
+
 @app.route('/api/chat/conversations', methods=['GET'])
 @token_required
 def list_conversations(current_user_id):
