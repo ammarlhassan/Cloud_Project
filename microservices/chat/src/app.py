@@ -306,7 +306,7 @@ def generate_ai_response(message, conversation_history=None, document_context=No
         }
         
         payload = {
-            "model": "amazon/nova-2-lite-v1:free",
+            "model": "google/gemini-2.0-flash-exp:free",
             "messages": messages,
             "temperature": 0.7,
             "max_tokens": 500
