@@ -1,7 +1,7 @@
 version: "3.9"
 
 services:
-  # --- NEW: Redis Service (Required for Chat Service) ---
+  # --- Redis Service (Required for Chat Service) ---
   redis:
     image: redis:alpine
     container_name: redis
@@ -64,6 +64,11 @@ services:
     hostname: chat-service
     ports:
       - "5003:5003"
+    # --- DNS FIX for AWS Database Connection ---
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+    # -------------------------------------------
     networks:
       - learner-lab-network
     volumes:
@@ -74,11 +79,9 @@ services:
       DB_NAME: chat_service
       DB_USER: ${CHAT_DB_USER:-postgres}
       DB_PASSWORD: ${CHAT_DB_PASSWORD}
-      # --- UPDATED: Fixed Syntax & Added Redis ---
       OPENROUTER_API_KEY: "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"
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      # -------------------------------------------
       KAFKA_BOOTSTRAP_SERVERS: "10.0.30.32:9092,10.0.30.124:9092,10.0.31.87:9092"
       ZOOKEEPER_HOSTS: "10.0.30.167:2181,10.0.30.222:2181,10.0.31.219:2181"
       PORT: 5003
