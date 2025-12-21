@@ -64,18 +64,13 @@ services:
     hostname: chat-service
     ports:
       - "5003:5003"
-    # --- DNS FIX for AWS Database Connection ---
-    dns:
-      - 8.8.8.8
-      - 8.8.4.4
-    # -------------------------------------------
     networks:
       - learner-lab-network
     volumes:
       - chat-temp:/tmp
     environment:
-      # --- UPDATED: New Database Address ---
-      DB_HOST: ${CHAT_DB_HOST:-cloud-project-db.cf0i2ajfhjwb.us-east-1.rds.amazonaws.com}
+      # --- UPDATED: Direct Private IP ---
+      DB_HOST: 10.0.20.150
       DB_PORT: 5432
       DB_NAME: chat_service
       DB_USER: ${CHAT_DB_USER:-postgres}
@@ -105,8 +100,8 @@ services:
     volumes:
       - document-temp:/tmp
     environment:
-      # --- UPDATED: New Database Address ---
-      DB_HOST: ${DOCUMENT_DB_HOST:-cloud-project-db.cf0i2ajfhjwb.us-east-1.rds.amazonaws.com}
+      # --- UPDATED: Direct Private IP ---
+      DB_HOST: 10.0.20.150
       DB_PORT: 5432
       DB_NAME: document_reader
       DB_USER: ${DOCUMENT_DB_USER:-postgres}
@@ -133,8 +128,8 @@ services:
     volumes:
       - quiz-temp:/tmp
     environment:
-      # --- UPDATED: New Database Address ---
-      DB_HOST: ${QUIZ_DB_HOST:-cloud-project-db.cf0i2ajfhjwb.us-east-1.rds.amazonaws.com}
+      # --- UPDATED: Direct Private IP ---
+      DB_HOST: 10.0.20.150
       DB_PORT: 5432
       DB_NAME: quiz_service
       DB_USER: ${QUIZ_DB_USER:-postgres}
