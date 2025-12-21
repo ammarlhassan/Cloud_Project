@@ -418,11 +418,13 @@ def upload_document():
         file_key = f"documents/{user_id}/{document_id}/{file.filename}"
         
         try:
+            # --- FIXED: Added ServerSideEncryption='AES256' for Learner Labs compliance ---
             s3_client.put_object(
                 Bucket=S3_BUCKET,
                 Key=file_key,
                 Body=file_data,
-                ContentType=file.content_type or 'application/octet-stream'
+                ContentType=file.content_type or 'application/octet-stream',
+                ServerSideEncryption='AES256'
             )
             
             s3_url = f"s3://{S3_BUCKET}/{file_key}"
