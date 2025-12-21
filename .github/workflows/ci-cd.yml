@@ -62,7 +62,6 @@ jobs:
         run: |
           echo "Building ${{ matrix.service }}..."
            
-          # Build
           docker build \
             -f docker/dockerfiles/${{ matrix.dockerfile }} \
             -t $ECR_REGISTRY/${{ matrix.image_name }}:$VERSION \
