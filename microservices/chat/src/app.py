@@ -56,7 +56,12 @@ REDIS_DB = int(os.environ.get('REDIS_DB', '0'))
 OPENROUTER_API_KEY = os.environ.get('OPENROUTER_API_KEY', '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')
 JWT_SECRET_KEY = os.environ.get('JWT_SECRET_KEY', 'your-secret-key-change-in-production')
 JWT_ALGORITHM = os.environ.get('JWT_ALGORITHM', 'HS256')
-
+FREE_MODELS = [
+    "google/gemini-2.0-flash-exp:free",       # Primary: Smartest, but unstable limits
+    "meta-llama/llama-3.2-3b-instruct:free",  # Backup 1: Fast, reliable, completely free
+    "google/gemini-exp-1206:free",            # Backup 2: Older Google experimental model
+    "microsoft/phi-3-mini-128k-instruct:free" # Backup 3: Microsoft's efficient small model
+]
 # Global variables
 shutdown_event = threading.Event()
 kafka_consumer = None
@@ -279,7 +284,7 @@ def get_db_connection():
 
 def generate_ai_response(message, conversation_history=None, document_context=None):
     """
-    Generate AI response using OpenRouter API
+    Generate AI response using OpenRouter API with Fallback Strategy
     """
     if not openrouter_client:
         response = f"I understand you said: '{message}'. "
@@ -287,6 +292,7 @@ def generate_ai_response(message, conversation_history=None, document_context=No
             response += "I can see you have a document loaded. "
         return response + "How can I help you?"
     
+    # 1. Prepare messages (This is the same for all models)
     try:
         messages = [{"role": "system", "content": "You are a helpful AI learning assistant."}]
         
@@ -299,35 +305,55 @@ def generate_ai_response(message, conversation_history=None, document_context=No
         
         messages.append({"role": "user", "content": message})
         
-        # Call OpenRouter API
         headers = {
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "HTTP-Referer": "http://localhost:5003" # OpenRouter requires this for rankings
         }
-        
-        payload = {
-            "model": "google/gemini-2.0-flash-exp:free",
-            "messages": messages,
-            "temperature": 0.7,
-            "max_tokens": 500
-        }
-        
-        response = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers=headers,
-            json=payload,
-            timeout=30
-        )
-        
-        if response.status_code == 200:
-            result = response.json()
-            return result['choices'][0]['message']['content']
-        else:
-            logger.error(f"OpenRouter API error: {response.status_code} - {response.text}")
-            return "I apologize, but I'm having trouble generating a response. Please try again."
+
+        # 2. Loop through the models
+        for model in FREE_MODELS:
+            try:
+                logger.info(f"Attempting to generate response using model: {model}")
+                
+                payload = {
+                    "model": model,
+                    "messages": messages,
+                    "temperature": 0.7,
+                    "max_tokens": 500
+                }
+                
+                response = requests.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers=headers,
+                    json=payload,
+                    timeout=30
+                )
+                
+                # If success (200 OK), return immediately
+                if response.status_code == 200:
+                    result = response.json()
+                    return result['choices'][0]['message']['content']
+                
+                # If Rate Limited (429) or Server Error (5xx), log and continue to next model
+                elif response.status_code == 429 or response.status_code >= 500:
+                    logger.warning(f"Model {model} failed with status {response.status_code}. Switching to backup...")
+                    continue
+                
+                # If it's a 400/401 error, it's a configuration issue, don't retry
+                else:
+                    logger.error(f"OpenRouter API error (Non-retryable): {response.status_code} - {response.text}")
+                    break
+
+            except Exception as e:
+                logger.error(f"Error calling model {model}: {e}")
+                continue # Try next model on exception
+
+        # 3. If loop finishes and no model worked
+        return "I apologize, but all AI services are currently unavailable or busy. Please try again later."
             
     except Exception as e:
-        logger.error(f"AI generation error: {e}")
+        logger.error(f"AI generation logic error: {e}")
         return "I apologize, but I'm having trouble generating a response. Please try again."
 
 
