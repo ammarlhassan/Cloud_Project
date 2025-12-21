@@ -34,7 +34,7 @@ CORS(app)
 
 # Environment configuration
 AWS_REGION = os.environ.get('AWS_REGION', 'us-east-1')
-S3_BUCKET = os.environ.get('S3_BUCKET_TTS', 'cse363-tts-service-storage-dev-334413050048')
+S3_BUCKET = os.environ.get('S3_BUCKET_TTS', 'tts2-service-storage-dev-653040176723')
 KAFKA_BOOTSTRAP_SERVERS = os.environ.get('KAFKA_BOOTSTRAP_SERVERS', 'localhost:9092').split(',')
 KAFKA_TOPIC_REQUEST = 'audio.generation.requested'
 KAFKA_TOPIC_COMPLETED = 'audio.generation.completed'
