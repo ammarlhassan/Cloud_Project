@@ -74,7 +74,8 @@ services:
     volumes:
       - chat-temp:/tmp
     environment:
-      DB_HOST: ${CHAT_DB_HOST:-cloud-project-db.cjyjymrymgig.us-east-1.rds.amazonaws.com}
+      # --- UPDATED: New Database Address ---
+      DB_HOST: ${CHAT_DB_HOST:-cloud-project-db.cf0i2ajfhjwb.us-east-1.rds.amazonaws.com}
       DB_PORT: 5432
       DB_NAME: chat_service
       DB_USER: ${CHAT_DB_USER:-postgres}
@@ -104,7 +105,8 @@ services:
     volumes:
       - document-temp:/tmp
     environment:
-      DB_HOST: ${DOCUMENT_DB_HOST:-cloud-project-db.cjyjymrymgig.us-east-1.rds.amazonaws.com}
+      # --- UPDATED: New Database Address ---
+      DB_HOST: ${DOCUMENT_DB_HOST:-cloud-project-db.cf0i2ajfhjwb.us-east-1.rds.amazonaws.com}
       DB_PORT: 5432
       DB_NAME: document_reader
       DB_USER: ${DOCUMENT_DB_USER:-postgres}
@@ -131,7 +133,8 @@ services:
     volumes:
       - quiz-temp:/tmp
     environment:
-      DB_HOST: ${QUIZ_DB_HOST:-cloud-project-db.cjyjymrymgig.us-east-1.rds.amazonaws.com}
+      # --- UPDATED: New Database Address ---
+      DB_HOST: ${QUIZ_DB_HOST:-cloud-project-db.cf0i2ajfhjwb.us-east-1.rds.amazonaws.com}
       DB_PORT: 5432
       DB_NAME: quiz_service
       DB_USER: ${QUIZ_DB_USER:-postgres}
