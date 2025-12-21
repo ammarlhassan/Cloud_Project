@@ -1,6 +1,16 @@
 version: "3.9"
 
 services:
+  # --- NEW: Redis Service (Required for Chat Service) ---
+  redis:
+    image: redis:alpine
+    container_name: redis
+    hostname: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - learner-lab-network
+
   tts-service:
     build:
       context: .
@@ -12,7 +22,6 @@ services:
       - "5001:5001"
     networks:
       - learner-lab-network
-    # ISOLATION: Unique volume for this container
     volumes:
       - tts-temp:/tmp
     environment:
@@ -35,7 +44,6 @@ services:
       - "5002:5002"
     networks:
       - learner-lab-network
-    # ISOLATION: Unique volume for this container
     volumes:
       - stt-temp:/tmp
     environment:
@@ -58,7 +66,6 @@ services:
       - "5003:5003"
     networks:
       - learner-lab-network
-    # ISOLATION: Unique volume for this container
     volumes:
       - chat-temp:/tmp
     environment:
@@ -67,7 +74,11 @@ services:
       DB_NAME: chat_service
       DB_USER: ${CHAT_DB_USER:-postgres}
       DB_PASSWORD: ${CHAT_DB_PASSWORD}
+      # --- UPDATED: Fixed Syntax & Added Redis ---
       OPENROUTER_API_KEY: "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"
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      # -------------------------------------------
       KAFKA_BOOTSTRAP_SERVERS: "10.0.30.32:9092,10.0.30.124:9092,10.0.31.87:9092"
       ZOOKEEPER_HOSTS: "10.0.30.167:2181,10.0.30.222:2181,10.0.31.219:2181"
       PORT: 5003
@@ -87,7 +98,6 @@ services:
       - "5004:5004"
     networks:
       - learner-lab-network
-    # ISOLATION: Unique volume for this container
     volumes:
       - document-temp:/tmp
     environment:
@@ -115,7 +125,6 @@ services:
       - "5005:5005"
     networks:
       - learner-lab-network
-    # ISOLATION: Unique volume for this container
     volumes:
       - quiz-temp:/tmp
     environment:
@@ -143,7 +152,6 @@ services:
       - "5000:5000"
     networks:
       - learner-lab-network
-    # ISOLATION: Unique volume for this container
     volumes:
       - gateway-temp:/tmp
     environment:
@@ -160,16 +168,10 @@ services:
       AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
       AWS_REGION: ${AWS_REGION:-us-east-1}
 
-# --------------------------
-# Networks
-# --------------------------
 networks:
   learner-lab-network:
     external: true
 
-# --------------------------
-# Volumes (NEW SECTION)
-# --------------------------
 volumes:
   tts-temp:
   stt-temp:
