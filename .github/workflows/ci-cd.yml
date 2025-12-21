@@ -44,9 +44,9 @@ jobs:
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          aws-access-key-id: ASIAU3XESGDANBIQRC7M
-          aws-secret-access-key: 1WY4vQjJuFP+70zxjqJBvutv9sJjiJ/HhesXXW4q    # (REQUIRED) Your AWS secret key
-          aws-session-token: IQoJb3JpZ2luX2VjEFsaCXVzLXdlc3QtMiJIMEYCIQDQU107CEtMv6s+4Ut13voVZaohyHJ98vxuW/pr6AekdwIhAPQL1mRufudXY9/EqURBveLhqmFfPKxsnIkuAL1H76GKKrYCCCQQABoMMzM0NDEzMDUwMDQ4Igw5JgCD2zcDOtxV7jYqkwKCX+aVfiRIOvn/UfNRrVGp/iZyP7xp/YZmBkgGFZ+j7B507eePcoebesgG22rdzzcOvh/pxtVkg99C5zCigxeTueKPcJf0Ut3OLVKUOf5/cp0YlROF/Qk1HaN/VX0F8t5h2+XjvR4lzaGjMiI3C6x7v0LYMJoa96len13rVvZoaoQUj7Z2YLJFf/v3hdPsKZfq8aH7PPz9ujh7QERuO4V5q/2k/LWt4X5jd0mTB0BUzAOv0mWI30rhY3wpMVNDEfk1VgOHVxl2xgv3s4FtJ7g09Ah60nnVZDIAw1CXELojNkOLgHgjfuKDPf7PPn7au6TrbIp6tjx79G4ZuNwOo8OVIHAHchLK8KJCf3qRmg8/RypAiDCB5fbJBjqcAQl+GyuIasfoqjyB/TYIXRqFVz9zOmvp7ZZ7UUnbujaIQybZOjyqhANS/EZ9UdGxgeB1tL12Fcs7moqgrFeXz8tFcJKpQltXoL8udmfxH07rGbIOTPInweVo2nzIR1S5eKtTugBQ+GCn5Nlg7LdE+UYMcMrgqvSIxrPT3Sicfd8WMAX0UyNb90h8RHra7D5n/35mOd3/eTDJyyv9FQ==
+          aws-access-key-id: ASIAZQDB2JZJZMUXXFA4
+          aws-secret-access-key: 1e6QgXx1HcPZ8AwjpGvFGXfc/gfun4npha5w5byJd   # (REQUIRED) Your AWS secret key
+          aws-session-token: IQoJb3JpZ2luX2VjEA8aCXVzLXdlc3QtMiJGMEQCIGUlc2cEEZ2oPEJq6rC8PJ30jzSMj6DS2AxeIpjLxnaqAiA4tE980hxGqANoJzfRKwglpVdSsAudaM+h6t/dQhIkjyrBAgjY//////////8BEAEaDDY1MzA0MDE3NjcyMyIM/QkZOK7s+Wu6q9AsKpUC5M2RGU/xVn2pigxI2KidW/bUgEEj7HOYXzyt3I5yWhzeRtqeY/epPyAushhtu1qxulP7Xo48GlZFLHetSU44vURQMlOdLQLTPWOz6ykDgAKHJswejsZ2dXCAxZX3NFXg8iUO/1dPv6FReb7Q3MtPVn4Ruv2CW0tC75DULpgpAjDbSAV3OimWSMhmPFJDAdj06+tUbPq7E6W3m/4BtPFgis/4iziQYF541QWwWn/mQ1vA2L1IRC90K/pq+6x0k2WVjgoS11KHAMEXoRuthDnHD9cAs+GV4Cii0IE4MzXgyh5xjKeEmSfmunNLhkOuE9qVo4K/XcDCVhFZ5BrKQkpLbZ6S7Nuz2JmVha2qqcrYaFYgzYuiHDCVvZ7KBjqeAaaoPnldjkfeIXVNvCE3zmB1BeCncr9iy0/vBVB7alHfeXTGEEi9AX8JZizOcRUuxEJSiMaFr4z8Vjx1wzm3QbBdB8VxtQje+/W7kVgzJkDG7Dg64AeYXkLJp7L7OukEhkDI52Bd5+6//G3JssKnBtUro3aoupdBBZB1ptadBkf+ux9vdMqMoSoGseuA8JjMf5kHojNmAXE7neGaI0td
           aws-region: us-east-1  
 
       # Step 3: Login to Amazon ECR
