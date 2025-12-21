@@ -40,13 +40,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v3
 
-      # Step 2: Configure AWS credentials (WITH SESSION TOKEN)
+      # Step 2: Configure AWS credentials (SECURE METHOD)
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
-          aws-access-key-id: ASIAZQDB2JZJZMUXXFA4
-          aws-secret-access-key: 1e6QgXx1HcPZ8AwjpGvFGXfc/gfun4npha5w5byJd   # (REQUIRED) Your AWS secret key
-          aws-session-token: IQoJb3JpZ2luX2VjEA8aCXVzLXdlc3QtMiJGMEQCIGUlc2cEEZ2oPEJq6rC8PJ30jzSMj6DS2AxeIpjLxnaqAiA4tE980hxGqANoJzfRKwglpVdSsAudaM+h6t/dQhIkjyrBAgjY//////////8BEAEaDDY1MzA0MDE3NjcyMyIM/QkZOK7s+Wu6q9AsKpUC5M2RGU/xVn2pigxI2KidW/bUgEEj7HOYXzyt3I5yWhzeRtqeY/epPyAushhtu1qxulP7Xo48GlZFLHetSU44vURQMlOdLQLTPWOz6ykDgAKHJswejsZ2dXCAxZX3NFXg8iUO/1dPv6FReb7Q3MtPVn4Ruv2CW0tC75DULpgpAjDbSAV3OimWSMhmPFJDAdj06+tUbPq7E6W3m/4BtPFgis/4iziQYF541QWwWn/mQ1vA2L1IRC90K/pq+6x0k2WVjgoS11KHAMEXoRuthDnHD9cAs+GV4Cii0IE4MzXgyh5xjKeEmSfmunNLhkOuE9qVo4K/XcDCVhFZ5BrKQkpLbZ6S7Nuz2JmVha2qqcrYaFYgzYuiHDCVvZ7KBjqeAaaoPnldjkfeIXVNvCE3zmB1BeCncr9iy0/vBVB7alHfeXTGEEi9AX8JZizOcRUuxEJSiMaFr4z8Vjx1wzm3QbBdB8VxtQje+/W7kVgzJkDG7Dg64AeYXkLJp7L7OukEhkDI52Bd5+6//G3JssKnBtUro3aoupdBBZB1ptadBkf+ux9vdMqMoSoGseuA8JjMf5kHojNmAXE7neGaI0td
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: us-east-1  
 
       # Step 3: Login to Amazon ECR
@@ -61,12 +61,12 @@ jobs:
           VERSION: 1.0.0
         run: |
           echo "Building ${{ matrix.service }}..."
-          
+           
           # Build
           docker build \
             -f docker/dockerfiles/${{ matrix.dockerfile }} \
             -t $ECR_REGISTRY/${{ matrix.image_name }}:$VERSION \
             .
-          
+           
           # Push
           docker push $ECR_REGISTRY/${{ matrix.image_name }}:$VERSION
